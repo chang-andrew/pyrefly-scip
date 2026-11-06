@@ -1321,7 +1321,25 @@ impl<'a> Transaction<'a> {
     ) -> Option<(TextRange, DefinitionMetadata)> {
         let param_id = param_name.id();
 
-        // Prefer class field annotations/assignments when present.
+        // A parameter of the class's own `__init__` is what the argument binds.
+        for stmt in &class_def.body {
+            if let Stmt::FunctionDef(function_def) = stmt
+                && function_def.name.id == dunder::INIT
+                && let Some(param) = function_def
+                    .parameters
+                    .args
+                    .iter()
+                    .chain(function_def.parameters.kwonlyargs.iter())
+                    .find(|param| param.name().id() == param_id)
+            {
+                return Some((
+                    param.name().range(),
+                    DefinitionMetadata::Variable(Some(SymbolKind::Variable)),
+                ));
+            }
+        }
+
+        // Without one, as in dataclasses and Pydantic models, the argument sets a class field.
         for stmt in &class_def.body {
             match stmt {
                 Stmt::AnnAssign(assign) if expr_matches_name(assign.target.as_ref(), param_id) => {
@@ -1337,30 +1355,6 @@ impl<'a> Transaction<'a> {
                     }
                 }
                 _ => {}
-            }
-        }
-
-        // Fall back to __init__ parameters if no class field matches.
-        for stmt in &class_def.body {
-            if let Stmt::FunctionDef(function_def) = stmt
-                && function_def.name.id == dunder::INIT
-            {
-                for regular_param in function_def.parameters.args.iter() {
-                    if regular_param.name().id() == param_id {
-                        return Some((
-                            regular_param.name().range(),
-                            DefinitionMetadata::Variable(Some(SymbolKind::Variable)),
-                        ));
-                    }
-                }
-                for kwonly_param in function_def.parameters.kwonlyargs.iter() {
-                    if kwonly_param.name().id() == param_id {
-                        return Some((
-                            kwonly_param.name().range(),
-                            DefinitionMetadata::Variable(Some(SymbolKind::Variable)),
-                        ));
-                    }
-                }
             }
         }
 

@@ -5237,6 +5237,34 @@ def f(exc: Exception) -> None:
 }
 
 #[test]
+fn keyword_argument_test_class_field_and_own_init() {
+    let code = r#"
+class Foo:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+def test() -> None:
+    Foo(x=1)
+#       ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+9 |     Foo(x=1)
+            ^
+Definition Result:
+5 |     def __init__(self, x: int) -> None:
+                           ^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
+#[test]
 fn keyword_argument_test_inherited_typed_dict_key_and_new() {
     let code = r#"
 from typing import TypedDict
