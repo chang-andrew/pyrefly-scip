@@ -16,11 +16,13 @@ use crate::report::scip::document::relative_path;
 use crate::report::scip::snapshot::render;
 use crate::report::scip::symbols::Package;
 use crate::state::require::Require;
-use crate::test::util::mk_multi_file_state_assert_no_errors;
+use crate::test::util::mk_multi_file_state;
 
 /// Renders the document of every file in `files`, in order, each under a `# <path>` header.
 fn index(files: &[(&'static str, &str)], show_docs: bool) -> String {
-    let (handles, state) = mk_multi_file_state_assert_no_errors(files, Require::Everything);
+    // The report is written whatever errors the files have, and some ported inputs have
+    // some.
+    let (handles, state) = mk_multi_file_state(files, Require::Everything, false);
     let transaction = state.transaction();
     let indexer = Indexer::new(
         &transaction,
@@ -450,6 +452,7 @@ class Base:
 class Child(Base):
 #     ^^^^^ definition  snapshot-util 0.1 docs/Child#
 #      enclosing [19, 0, 20, 17]
+#      relationship implementation  snapshot-util 0.1 docs/Base#
 #      kind Class display_name Child
 #      signature @dataclass(frozen=True)
 #                class Child(Base):
@@ -630,6 +633,7 @@ class Base:
 class Child(Base):
 #     ^^^^^ definition  snapshot-util 0.1 main/Child#
 #      enclosing [13, 0, 14, 31]
+#      relationship implementation  snapshot-util 0.1 main/Base#
 #           ^^^^ reference  snapshot-util 0.1 main/Base#
     registry: ClassVar["Child"]
 #   ^^^^^^^^ definition  snapshot-util 0.1 main/Child#registry.
@@ -639,6 +643,137 @@ class Child(Base):
 
 Child(origin=1)
 #^^^^ reference  snapshot-util 0.1 main/Child#
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/inherits_class.py and grandparent_impl.py.
+// The occurrences and relationships match scip-python's, except `NotImplemented`, which
+// pyrefly's typeshed declares as a variable rather than a class (`stdlib-same-name` in
+// scip-goal/ADJUDICATIONS.md).
+#[test]
+fn test_ported_inherits_class() {
+    assert_index(
+        &[
+            (
+                "inherits_class",
+                r#"class A:
+    def x(self) -> int:
+        raise NotImplemented
+
+    def matched_despite_different_type(self, x: int):
+        pass
+
+class B(A):
+    def x(self) -> int:
+        return 5
+
+    def matched_despite_different_type(self, x: int, y: int):
+        pass
+
+    def unrelated(self):
+        pass
+"#,
+            ),
+            (
+                "grandparent_impl",
+                r#"class A:
+    def grandparent(self) -> bool:
+        return True
+
+class B(A):
+    ...
+
+class C(B):
+    def grandparent(self) -> bool:
+        return False
+"#,
+            ),
+        ],
+        r#"
+# inherits_class.py
+# < definition scip-python python snapshot-util 0.1 inherits_class/__init__:
+class A:
+#     ^ definition  snapshot-util 0.1 inherits_class/A#
+#      enclosing [0, 0, 5, 12]
+    def x(self) -> int:
+#       ^ definition  snapshot-util 0.1 inherits_class/A#x().
+#        enclosing [1, 4, 2, 28]
+#         ^^^^ definition  snapshot-util 0.1 inherits_class/A#x().(self)
+#                  ^^^ reference  python-stdlib 3.12 builtins/int#
+        raise NotImplemented
+#             ^^^^^^^^^^^^^^ reference  python-stdlib 3.12 builtins/NotImplemented.
+
+    def matched_despite_different_type(self, x: int):
+#       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inherits_class/A#matched_despite_different_type().
+#        enclosing [4, 4, 5, 12]
+#                                      ^^^^ definition  snapshot-util 0.1 inherits_class/A#matched_despite_different_type().(self)
+#                                            ^ definition  snapshot-util 0.1 inherits_class/A#matched_despite_different_type().(x)
+#                                               ^^^ reference  python-stdlib 3.12 builtins/int#
+        pass
+
+class B(A):
+#     ^ definition  snapshot-util 0.1 inherits_class/B#
+#      enclosing [7, 0, 15, 12]
+#      relationship implementation  snapshot-util 0.1 inherits_class/A#
+#       ^ reference  snapshot-util 0.1 inherits_class/A#
+    def x(self) -> int:
+#       ^ definition  snapshot-util 0.1 inherits_class/B#x().
+#        enclosing [8, 4, 9, 16]
+#        relationship implementation  snapshot-util 0.1 inherits_class/A#x().
+#         ^^^^ definition  snapshot-util 0.1 inherits_class/B#x().(self)
+#                  ^^^ reference  python-stdlib 3.12 builtins/int#
+        return 5
+
+    def matched_despite_different_type(self, x: int, y: int):
+#       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().
+#        enclosing [11, 4, 12, 12]
+#        relationship implementation  snapshot-util 0.1 inherits_class/A#matched_despite_different_type().
+#                                      ^^^^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().(self)
+#                                            ^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().(x)
+#                                               ^^^ reference  python-stdlib 3.12 builtins/int#
+#                                                    ^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().(y)
+#                                                       ^^^ reference  python-stdlib 3.12 builtins/int#
+        pass
+
+    def unrelated(self):
+#       ^^^^^^^^^ definition  snapshot-util 0.1 inherits_class/B#unrelated().
+#        enclosing [14, 4, 15, 12]
+#                 ^^^^ definition  snapshot-util 0.1 inherits_class/B#unrelated().(self)
+        pass
+
+# grandparent_impl.py
+# < definition scip-python python snapshot-util 0.1 grandparent_impl/__init__:
+class A:
+#     ^ definition  snapshot-util 0.1 grandparent_impl/A#
+#      enclosing [0, 0, 2, 19]
+    def grandparent(self) -> bool:
+#       ^^^^^^^^^^^ definition  snapshot-util 0.1 grandparent_impl/A#grandparent().
+#        enclosing [1, 4, 2, 19]
+#                   ^^^^ definition  snapshot-util 0.1 grandparent_impl/A#grandparent().(self)
+#                            ^^^^ reference  python-stdlib 3.12 builtins/bool#
+        return True
+
+class B(A):
+#     ^ definition  snapshot-util 0.1 grandparent_impl/B#
+#      enclosing [4, 0, 5, 7]
+#      relationship implementation  snapshot-util 0.1 grandparent_impl/A#
+#       ^ reference  snapshot-util 0.1 grandparent_impl/A#
+    ...
+
+class C(B):
+#     ^ definition  snapshot-util 0.1 grandparent_impl/C#
+#      enclosing [7, 0, 9, 20]
+#      relationship implementation  snapshot-util 0.1 grandparent_impl/B#
+#       ^ reference  snapshot-util 0.1 grandparent_impl/B#
+    def grandparent(self) -> bool:
+#       ^^^^^^^^^^^ definition  snapshot-util 0.1 grandparent_impl/C#grandparent().
+#        enclosing [8, 4, 9, 20]
+#        relationship implementation  snapshot-util 0.1 grandparent_impl/A#grandparent().
+#                   ^^^^ definition  snapshot-util 0.1 grandparent_impl/C#grandparent().(self)
+#                            ^^^^ reference  python-stdlib 3.12 builtins/bool#
+        return False
 "#,
     );
 }

@@ -25,10 +25,12 @@ use pyrefly_python::short_identifier::ShortIdentifier;
 use pyrefly_python::symbol_kind::SymbolKind;
 use pyrefly_python::sys_info::PythonVersion;
 use ruff_python_ast::Identifier;
+use ruff_python_ast::name::Name;
 use ruff_text_size::TextRange;
 use scip::types::Document;
 use scip::types::Occurrence;
 use scip::types::PositionEncoding;
+use scip::types::Relationship;
 use scip::types::Signature;
 use scip::types::SymbolInformation;
 use scip::types::SymbolRole;
@@ -48,6 +50,7 @@ use crate::report::scip::symbols::module_namespace;
 use crate::state::lsp::DefinitionMetadata;
 use crate::state::lsp::FindDefinitionItemWithDocstring;
 use crate::state::state::Transaction;
+use crate::types::types::Type;
 
 /// The path of a module relative to `root`, with `/` separators on every platform. A path
 /// outside `root` is kept as it is.
@@ -172,32 +175,132 @@ impl<'a> Indexer<'a> {
         definition: &FindDefinitionItemWithDocstring,
     ) -> Option<OccurrenceSymbol> {
         let module = &definition.module;
-        let package = self.package(module);
         if matches!(definition.metadata, DefinitionMetadata::Module)
             || (definition.metadata.symbol_kind() == Some(SymbolKind::Module)
                 && definition.definition_range.is_empty())
         {
             return Some(OccurrenceSymbol::Global(
-                package.symbol(&module_descriptors(module.name())),
+                self.package(module)
+                    .symbol(&module_descriptors(module.name())),
             ));
         }
+        self.site_at(handle, module, definition.definition_range)
+            .map(|(symbol, _)| symbol)
+    }
+
+    /// The symbol and kind of the binding site at `range` in `module`, as seen from
+    /// `handle`.
+    fn site_at(
+        &self,
+        handle: &Handle,
+        module: &Module,
+        range: TextRange,
+    ) -> Option<(OccurrenceSymbol, SiteKind)> {
         let target = Handle::new(
             module.name(),
             module.path().dupe(),
             handle.sys_info().dupe(),
         );
-        match &self
-            .definitions(&target, module)
-            .get(definition.definition_range)?
-            .symbol
-        {
+        let definitions = self.definitions(&target, module);
+        let site = definitions.get(range)?;
+        let symbol = match &site.symbol {
             SiteSymbol::Global(descriptors) => {
-                Some(OccurrenceSymbol::Global(package.symbol(descriptors)))
+                OccurrenceSymbol::Global(self.package(module).symbol(descriptors))
             }
             SiteSymbol::Local(id) => {
-                (module.path() == handle.path()).then_some(OccurrenceSymbol::Local(*id))
+                if module.path() != handle.path() {
+                    return None;
+                }
+                OccurrenceSymbol::Local(*id)
+            }
+        };
+        Some((symbol, site.kind))
+    }
+
+    /// The `implementation` relationships of the classes and methods defined in `handle`,
+    /// by the range of their name. A class implements its direct base classes other than
+    /// `object`, and a method implements the method that the nearest base class defining
+    /// its name has, as scip-python relates them (dunder methods have none).
+    fn relationships(
+        &self,
+        handle: &Handle,
+        module: &Module,
+        definitions: &Definitions,
+    ) -> HashMap<TextRange, Vec<String>> {
+        let Some(answers) = self.transaction.get_answers(handle) else {
+            return HashMap::new();
+        };
+        let bindings = answers.bindings();
+        let targets = self
+            .transaction
+            .ad_hoc_solve(handle, "scip_relationships", |solver| {
+                let mut targets: Vec<(TextRange, Module, TextRange)> = Vec::new();
+                for (range, site) in definitions.iter() {
+                    if site.role != SiteRole::Definition {
+                        continue;
+                    }
+                    let name = Name::new(module.code_at(*range));
+                    match site.kind {
+                        SiteKind::Class => {
+                            let key = Key::Definition(ShortIdentifier::new(&Identifier::new(
+                                name, *range,
+                            )));
+                            if !bindings.is_valid_key(&key) {
+                                continue;
+                            }
+                            let Some(Type::ClassDef(class)) =
+                                answers.get_type_at(bindings.key_to_idx(&key))
+                            else {
+                                continue;
+                            };
+                            for base in solver.get_base_types_for_class(&class).iter() {
+                                let base = base.class_object();
+                                if !(base.module_name() == ModuleName::builtins()
+                                    && base.name() == "object")
+                                {
+                                    targets.push((*range, base.module().dupe(), base.range()));
+                                }
+                            }
+                        }
+                        SiteKind::Method if !name.starts_with("__") => {
+                            let Some(class) = bindings
+                                .enclosing_class(*range)
+                                .and_then(|key| solver.get_idx(key).0.clone())
+                            else {
+                                continue;
+                            };
+                            let overridden = solver
+                                .get_mro_for_class(&class)
+                                .ancestors(solver.stdlib)
+                                .find_map(|ancestor| {
+                                    let ancestor = ancestor.class_object();
+                                    let range = solver
+                                        .get_class_fields(ancestor)?
+                                        .field_decl_range(&name)?;
+                                    Some((ancestor.module().dupe(), range))
+                                });
+                            if let Some((base_module, base_range)) = overridden {
+                                targets.push((*range, base_module, base_range));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                targets
+            })
+            .unwrap_or_default();
+        let mut relationships: HashMap<TextRange, Vec<String>> = HashMap::new();
+        for (range, target_module, target_range) in targets {
+            let kind = definitions.get(range).map(|site| site.kind);
+            if let Some((OccurrenceSymbol::Global(symbol), target_kind)) =
+                self.site_at(handle, &target_module, target_range)
+                && (kind == Some(SiteKind::Class)
+                    || matches!(target_kind, SiteKind::Method | SiteKind::Function))
+            {
+                relationships.entry(range).or_default().push(symbol);
             }
         }
+        relationships
     }
 
     /// The name of the module `handle` in its symbols. A file that cannot be imported, such
@@ -322,6 +425,7 @@ impl<'a> Indexer<'a> {
         }];
 
         let definitions = self.definitions(handle, &module);
+        let mut relationships = self.relationships(handle, &module, &definitions);
         let mut pending = Vec::new();
         for (range, site) in definitions.iter() {
             let is_definition = site.role == SiteRole::Definition;
@@ -361,9 +465,20 @@ impl<'a> Indexer<'a> {
                         documentation.push(docstring.resolve());
                     }
                 }
+                let mut targets = relationships.remove(range).unwrap_or_default();
+                targets.sort();
+                targets.dedup();
                 symbols.push(SymbolInformation {
                     symbol: self.project.symbol(descriptors),
                     documentation,
+                    relationships: targets
+                        .into_iter()
+                        .map(|symbol| Relationship {
+                            symbol,
+                            is_implementation: true,
+                            ..Default::default()
+                        })
+                        .collect(),
                     kind: scip_kind(site.kind).into(),
                     display_name: name.to_owned(),
                     signature_documentation: signature
