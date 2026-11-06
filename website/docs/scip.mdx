@@ -1,0 +1,78 @@
+---
+title: SCIP Index
+description: Write a SCIP code-intelligence index of your Python project with pyrefly check.
+---
+
+{/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */}
+
+# SCIP Index
+
+:::warning Experimental
+This feature is experimental. The contents of the index may change in future releases.
+:::
+
+`pyrefly check` can write a [SCIP](https://github.com/sourcegraph/scip) index of the files it
+checks. SCIP is a language-agnostic format for code intelligence: it records where each symbol
+is defined and referenced, so tools such as code search and code review can offer
+go-to-definition and find-references without running a language server.
+
+The index uses the same symbol names as
+[scip-python](https://github.com/sourcegraph/scip-python), so it can replace a scip-python
+index in an existing pipeline, and links between the two kinds of index keep working.
+
+## Usage
+
+```
+pyrefly check --report-scip index.scip
+```
+
+The index is written even when the check finds type errors, so the exit status still reports
+them. Document paths in the index are relative to the current working directory, and always use
+`/` as the separator.
+
+| Flag | Description |
+|---|---|
+| `--report-scip <OUTPUT_FILE>` | Write a SCIP index of the checked files to `OUTPUT_FILE`. |
+| `--scip-project-name <NAME>` | The package name in the symbols of the project's own code. Defaults to the name of the current working directory. Requires `--report-scip`. |
+| `--scip-project-version <VERSION>` | The package version in the symbols of the project's own code. Defaults to `0.0.0`. Requires `--report-scip`. |
+
+For example, to index a project at a given commit:
+
+```
+pyrefly check --report-scip index.scip \
+  --scip-project-name my-project \
+  --scip-project-version "$(git rev-parse --short HEAD)"
+```
+
+## What the index contains
+
+- **One document per checked file**, with the module's own definition at its start.
+- **Definitions** of modules, classes, functions, methods, parameters, type parameters,
+  variables at module and class level, and instance attributes assigned through `self`.
+  Variables local to a function get document-local symbols.
+- **References** to names, attributes, keyword arguments and imports, resolved the way
+  go-to-definition resolves them, following imports to the original definition. A reference
+  through an instance whose class overrides an inherited member resolves to the override.
+- **Access roles** on references: write access for assignment, augmented assignment and `del`
+  targets, read access for other uses, and import for names in import statements.
+- **Symbol information** for every definition: its kind, display name and signature, and
+  documentation holding the hover signature in a Python code block followed by the docstring.
+- **Relationships**: a class implements each of its base classes, and a method implements the
+  method it overrides.
+
+A reference that pyrefly cannot resolve, such as a name imported from a package that is not
+installed, has no occurrence in the index.
+
+## Symbols
+
+Symbols use scip-python's scheme, `scip-python python <package> <version> <descriptors>`:
+
+- the project's own code uses the package name and version from the flags above;
+- the standard library uses the package `python-stdlib` and the configured Python version;
+- module paths that contain a dot are written in backticks, for example
+  `` `pkg.module`/Class#method(). ``.
