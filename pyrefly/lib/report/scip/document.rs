@@ -22,6 +22,7 @@ use pyrefly_python::module_name::ModuleName;
 use pyrefly_python::module_path::ModulePath;
 use pyrefly_python::module_path::ModulePathDetails;
 use pyrefly_python::short_identifier::ShortIdentifier;
+use pyrefly_python::symbol_kind::SymbolKind;
 use pyrefly_python::sys_info::PythonVersion;
 use ruff_python_ast::Identifier;
 use ruff_text_size::TextRange;
@@ -163,7 +164,8 @@ impl<'a> Indexer<'a> {
 
     /// The symbol of a definition that pyrefly resolved a reference in `handle` to: the
     /// module itself, or the binding site at the definition's range. A local symbol only
-    /// resolves within its own module.
+    /// resolves within its own module. A name bound to a module by an import resolves to
+    /// the module with an empty range rather than with module metadata.
     pub fn resolve(
         &self,
         handle: &Handle,
@@ -171,7 +173,10 @@ impl<'a> Indexer<'a> {
     ) -> Option<OccurrenceSymbol> {
         let module = &definition.module;
         let package = self.package(module);
-        if matches!(definition.metadata, DefinitionMetadata::Module) {
+        if matches!(definition.metadata, DefinitionMetadata::Module)
+            || (definition.metadata.symbol_kind() == Some(SymbolKind::Module)
+                && definition.definition_range.is_empty())
+        {
             return Some(OccurrenceSymbol::Global(
                 package.symbol(&module_descriptors(module.name())),
             ));
@@ -374,7 +379,13 @@ impl<'a> Indexer<'a> {
         }
 
         let ast = self.transaction.get_ast_or_parse_module(handle, &module);
-        pending.extend(References::collect(self, handle, &definitions, &ast));
+        pending.extend(References::collect(
+            self,
+            handle,
+            &module,
+            &definitions,
+            &ast,
+        ));
 
         // Number locals in the order of their first occurrence, then sort occurrences by range
         // and symbol.

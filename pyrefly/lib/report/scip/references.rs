@@ -13,7 +13,11 @@
 //! reference that does not resolve, such as one into an unresolved import, has no
 //! occurrence.
 
+use std::mem;
+
 use pyrefly_build::handle::Handle;
+use pyrefly_python::ast::Ast;
+use pyrefly_python::module::Module;
 use pyrefly_python::module_name::ModuleName;
 use ruff_python_ast::Expr;
 use ruff_python_ast::ExprAttribute;
@@ -24,6 +28,7 @@ use ruff_python_ast::ModModule;
 use ruff_python_ast::Stmt;
 use ruff_python_ast::StmtImport;
 use ruff_python_ast::StmtImportFrom;
+use ruff_python_ast::name::Name;
 use ruff_python_ast::visitor::source_order::SourceOrderVisitor;
 use ruff_python_ast::visitor::source_order::walk_expr;
 use ruff_python_ast::visitor::source_order::walk_stmt;
@@ -33,7 +38,9 @@ use ruff_text_size::TextSize;
 use scip::types::SymbolRole;
 
 use crate::report::scip::definitions::Definitions;
+use crate::report::scip::definitions::SiteSymbol;
 use crate::report::scip::document::Indexer;
+use crate::report::scip::document::OccurrenceSymbol;
 use crate::report::scip::document::PendingOccurrence;
 use crate::state::lsp::FindDefinitionItemWithDocstring;
 use crate::state::lsp::FindPreference;
@@ -42,8 +49,15 @@ use crate::state::lsp::resolve_relative_module_name;
 pub struct References<'i, 'a> {
     indexer: &'i Indexer<'a>,
     handle: &'i Handle,
+    module: &'i Module,
     definitions: &'i Definitions,
     occurrences: Vec<PendingOccurrence>,
+    /// The parameters of the lambdas being visited, innermost last. Go-to-definition does
+    /// not resolve a lambda's parameters, so references to them are matched here.
+    lambda_parameters: Vec<Vec<(Name, TextRange)>>,
+    /// Whether the expression being visited is an annotation, whose string literals are
+    /// forward references.
+    in_annotation: bool,
 }
 
 impl<'i, 'a> References<'i, 'a> {
@@ -52,14 +66,18 @@ impl<'i, 'a> References<'i, 'a> {
     pub fn collect(
         indexer: &'i Indexer<'a>,
         handle: &'i Handle,
+        module: &'i Module,
         definitions: &'i Definitions,
-        ast: &ModModule,
+        ast: &'i ModModule,
     ) -> Vec<PendingOccurrence> {
         let mut references = Self {
             indexer,
             handle,
+            module,
             definitions,
             occurrences: Vec::new(),
+            lambda_parameters: Vec::new(),
+            in_annotation: false,
         };
         references.visit_body(&ast.body);
         references.occurrences
@@ -72,15 +90,32 @@ impl<'i, 'a> References<'i, 'a> {
         definition: Option<FindDefinitionItemWithDocstring>,
         roles: i32,
     ) {
-        if let Some(symbol) =
-            definition.and_then(|definition| self.indexer.resolve(self.handle, &definition))
-        {
+        let symbol =
+            definition.and_then(|definition| self.indexer.resolve(self.handle, &definition));
+        self.push_symbol(range, symbol, roles);
+    }
+
+    fn push_symbol(&mut self, range: TextRange, symbol: Option<OccurrenceSymbol>, roles: i32) {
+        if let Some(symbol) = symbol {
             self.occurrences.push(PendingOccurrence {
                 range,
                 symbol,
                 roles,
                 enclosing_range: Vec::new(),
             });
+        }
+    }
+
+    /// The symbol of the parameter named `name` of the innermost lambda that has one.
+    fn lambda_parameter(&self, name: &str) -> Option<OccurrenceSymbol> {
+        let parameter = self
+            .lambda_parameters
+            .iter()
+            .rev()
+            .find_map(|parameters| parameters.iter().find(|(id, _)| id == name))?;
+        match &self.definitions.get(parameter.1)?.symbol {
+            SiteSymbol::Local(id) => Some(OccurrenceSymbol::Local(*id)),
+            SiteSymbol::Global(_) => None,
         }
     }
 
@@ -121,7 +156,11 @@ impl<'i, 'a> References<'i, 'a> {
         } else {
             SymbolRole::ReadAccess
         };
-        self.push(name.range, definition, role as i32);
+        let symbol = match definition {
+            Some(definition) => self.indexer.resolve(self.handle, &definition),
+            None => self.lambda_parameter(&name.id),
+        };
+        self.push_symbol(name.range, symbol, role as i32);
     }
 
     fn visit_attribute(&mut self, attribute: &ExprAttribute) {
@@ -196,12 +235,44 @@ impl<'v> SourceOrderVisitor<'v> for References<'_, '_> {
         }
     }
 
+    fn visit_annotation(&mut self, expr: &'v Expr) {
+        let in_annotation = mem::replace(&mut self.in_annotation, true);
+        self.visit_expr(expr);
+        self.in_annotation = in_annotation;
+    }
+
     fn visit_expr(&mut self, expr: &'v Expr) {
         match expr {
             Expr::Name(name) if !name.ctx.is_store() => self.visit_name(name),
             Expr::Attribute(attribute) => {
                 self.visit_expr(&attribute.value);
                 self.visit_attribute(attribute);
+            }
+            Expr::StringLiteral(literal) if self.in_annotation => {
+                if let Ok(parsed) = Ast::parse_type_literal(literal, self.module.contents()) {
+                    self.visit_expr(&parsed);
+                }
+            }
+            Expr::Lambda(lambda) => {
+                let parameters: Vec<_> = lambda
+                    .parameters
+                    .iter()
+                    .flat_map(|parameters| parameters.iter())
+                    .collect();
+                for default in parameters
+                    .iter()
+                    .filter_map(|parameter| parameter.default())
+                {
+                    self.visit_expr(default);
+                }
+                self.lambda_parameters.push(
+                    parameters
+                        .iter()
+                        .map(|parameter| (parameter.name().id.clone(), parameter.name().range))
+                        .collect(),
+                );
+                self.visit_expr(&lambda.body);
+                self.lambda_parameters.pop();
             }
             _ => walk_expr(self, expr),
         }

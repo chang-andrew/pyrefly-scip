@@ -193,6 +193,7 @@ class Base:
 #                  ^^^^^ reference  snapshot-util 0.1 defs/Base#helper().(value)
 
     @functools.cache
+#    ^^^^^^^^^ reference  python-stdlib 3.12 functools/__init__:
 #              ^^^^^ reference  python-stdlib 3.12 functools/cache().
     def method(self, *args, **kwargs):
 #       ^^^^^^ definition  snapshot-util 0.1 defs/Base#method().
@@ -202,6 +203,7 @@ class Base:
 #                             ^^^^^^ definition  snapshot-util 0.1 defs/Base#method().(kwargs)
         return lambda x: x
 #                     ^ definition local 2
+#                        ^ reference local 2
 
     @staticmethod
 #    ^^^^^^^^^^^^ reference  python-stdlib 3.12 builtins/staticmethod#
@@ -402,6 +404,7 @@ class Base:
 #                  ^^^ reference  python-stdlib 3.12 builtins/int#
 
     @functools.cache
+#    ^^^^^^^^^ reference  python-stdlib 3.12 functools/__init__:
 #              ^^^^^ reference  python-stdlib 3.12 functools/cache().
     def method(self, a, *args, b: int = 2, **kwargs):
 #       ^^^^^^ definition  snapshot-util 0.1 docs/Base#method().
@@ -545,6 +548,97 @@ Widget(size=1, extra=2)
 make(color="red", extra=2)
 #^^^ reference  snapshot-util 0.1 kwargs/make().
 #    ^^^^^ reference  snapshot-util 0.1 kwargs/make().(color)
+"#,
+    );
+}
+
+#[test]
+fn test_module_and_lambda_references() {
+    assert_index(
+        &[
+            ("pkg.sub", "VALUE = 1\n"),
+            ("pkg", ""),
+            (
+                "main",
+                r#"
+import json
+from pkg import sub
+from typing import ClassVar
+
+json.loads("1")
+sub.VALUE
+by_first = sorted([(1, 2)], key=lambda pair: pair[0])
+
+class Base:
+    def __init__(self, origin: int) -> None:
+        pass
+
+class Child(Base):
+    registry: ClassVar["Child"]
+
+Child(origin=1)
+"#,
+            ),
+        ],
+        r#"
+# pkg/sub.py
+# < definition scip-python python snapshot-util 0.1 `pkg.sub`/__init__:
+VALUE = 1
+#^^^^ definition  snapshot-util 0.1 `pkg.sub`/VALUE.
+# enclosing [0, 0, 9]
+
+# pkg.py
+# < definition scip-python python snapshot-util 0.1 pkg/__init__:
+
+# main.py
+# < definition scip-python python snapshot-util 0.1 main/__init__:
+
+import json
+#      ^^^^ reference[import]  python-stdlib 3.12 json/__init__:
+from pkg import sub
+#    ^^^ reference[import]  snapshot-util 0.1 pkg/__init__:
+#               ^^^ reference[import]  snapshot-util 0.1 `pkg.sub`/__init__:
+from typing import ClassVar
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^^^^^^ reference[import]  python-stdlib 3.12 typing/ClassVar.
+
+json.loads("1")
+#^^^ reference  python-stdlib 3.12 json/__init__:
+#    ^^^^^ reference  python-stdlib 3.12 json/loads().
+sub.VALUE
+#^^ reference  snapshot-util 0.1 `pkg.sub`/__init__:
+#   ^^^^^ reference  snapshot-util 0.1 `pkg.sub`/VALUE.
+by_first = sorted([(1, 2)], key=lambda pair: pair[0])
+#^^^^^^^ definition  snapshot-util 0.1 main/by_first.
+# enclosing [7, 0, 53]
+#          ^^^^^^ reference  python-stdlib 3.12 builtins/sorted().
+#                           ^^^ reference  python-stdlib 3.12 builtins/sorted().(key)
+#                                      ^^^^ definition local 0
+#                                            ^^^^ reference local 0
+
+class Base:
+#     ^^^^ definition  snapshot-util 0.1 main/Base#
+#      enclosing [9, 0, 11, 12]
+    def __init__(self, origin: int) -> None:
+#       ^^^^^^^^ definition  snapshot-util 0.1 main/Base#__init__().
+#        enclosing [10, 4, 11, 12]
+#                ^^^^ definition  snapshot-util 0.1 main/Base#__init__().(self)
+#                      ^^^^^^ definition  snapshot-util 0.1 main/Base#__init__().(origin)
+#                              ^^^ reference  python-stdlib 3.12 builtins/int#
+        pass
+
+class Child(Base):
+#     ^^^^^ definition  snapshot-util 0.1 main/Child#
+#      enclosing [13, 0, 14, 31]
+#           ^^^^ reference  snapshot-util 0.1 main/Base#
+    registry: ClassVar["Child"]
+#   ^^^^^^^^ definition  snapshot-util 0.1 main/Child#registry.
+#    enclosing [14, 4, 31]
+#             ^^^^^^^^ reference  python-stdlib 3.12 typing/ClassVar.
+#                       ^^^^^ reference  snapshot-util 0.1 main/Child#
+
+Child(origin=1)
+#^^^^ reference  snapshot-util 0.1 main/Child#
 "#,
     );
 }
