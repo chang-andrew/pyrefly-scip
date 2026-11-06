@@ -308,10 +308,11 @@ pub struct FindPreference {
     /// which can open any file, but not consumers like Glean, which must
     /// target files inside the project.
     pub include_interpreter_stdlib: bool,
-    /// When true (the default), an attribute written in the source can resolve to a member
-    /// that its class inherits from `object`, such as `obj.__class__`. Pysa sets this to
-    /// false, because its call graph treats calls to those members as unresolved.
-    pub include_object_members: bool,
+    /// When true (the default), an attribute written in the source can resolve to an
+    /// implicit member: one that its class inherits from `object`, such as `obj.__class__`,
+    /// or, on a class object, a member of its metaclass, such as `C.__name__`. Pysa sets this
+    /// to false, because its call graph treats calls to those members as unresolved.
+    pub include_implicit_members: bool,
 }
 
 impl Default for FindPreference {
@@ -324,7 +325,7 @@ impl Default for FindPreference {
             replacement_policy: ImportReplacementPolicy::Respect,
             disable_style_fallback: false,
             include_interpreter_stdlib: false,
-            include_object_members: true,
+            include_implicit_members: true,
         }
     }
 }
@@ -2494,9 +2495,9 @@ impl<'a> Transaction<'a> {
     /// on any branch of a union type. The returned `Vec1` is guaranteed
     /// non-empty.
     ///
-    /// `include_object` says whether a member that a class inherits from `object` counts.
-    /// It can for an attribute written in the source (`obj.__class__`, see
-    /// `FindPreference::include_object_members`), but not for the implicit lookups of a
+    /// `include_implicit` says whether an implicit member (see `AttrInfo::is_implicit`)
+    /// counts. It can for an attribute written in the source (`obj.__class__`, see
+    /// `FindPreference::include_implicit_members`), but not for the implicit lookups of a
     /// constructor, `__call__` or an operator, whose callers fall back to another target when
     /// the class does not define the member.
     pub(crate) fn find_attribute_definition_for_base_type(
@@ -2505,11 +2506,11 @@ impl<'a> Transaction<'a> {
         preference: FindPreference,
         base_type: Type,
         name: &Name,
-        include_object: bool,
+        include_implicit: bool,
     ) -> Result<Vec1<FindDefinitionItemWithDocstring>, EmptyResponseReason> {
         let defs = self
             .ad_hoc_solve(handle, "attribute_definition", |solver| {
-                let completions = |ty| solver.completions(ty, Some(name), false, include_object);
+                let completions = |ty| solver.completions(ty, Some(name), false, include_implicit);
 
                 match base_type {
                     Type::Union(u) => u
@@ -2903,7 +2904,7 @@ impl<'a> Transaction<'a> {
             preference,
             base_type.clone(),
             name,
-            preference.include_object_members,
+            preference.include_implicit_members,
         ) {
             return Ok(defs);
         }
@@ -5030,7 +5031,7 @@ impl<'a> Transaction<'a> {
                         is_deprecated: _,
                         definition,
                         is_reexport: _,
-                        is_from_object: _,
+                        is_implicit: _,
                     } in solver.completions(base_type, Some(&attribute.id), false, false)
                     {
                         if let Some((TextRangeWithModule { module, range }, _)) = self

@@ -5209,6 +5209,34 @@ def f(obj: Base) -> None:
 }
 
 #[test]
+fn attribute_of_metaclass_on_class_object() {
+    let code = r#"
+from enum import Enum
+
+class Base:
+    pass
+
+class Kind(Enum):
+    A = 1
+
+def f(exc: Exception) -> None:
+    type(exc).__name__
+#              ^
+    Base.__subclasses__()
+#          ^
+    Kind.__members__
+#          ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert!(
+        report.contains("__name__: str")
+            && report.contains("def __subclasses__(self")
+            && report.contains("def __members__(self"),
+        "missing definitions of metaclass members:\n{report}"
+    );
+}
+
+#[test]
 fn keyword_argument_test_inherited_typed_dict_key_and_new() {
     let code = r#"
 from typing import TypedDict

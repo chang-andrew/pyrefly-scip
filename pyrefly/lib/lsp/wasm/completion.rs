@@ -1024,7 +1024,7 @@ impl Transaction<'_> {
                         expected_type,
                         attr.ty.as_ref(),
                     );
-                    let source = if attr.is_from_object {
+                    let source = if attr.is_implicit {
                         CompletionSource::Object
                     } else if attr.is_reexport {
                         CompletionSource::Reexport

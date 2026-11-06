@@ -3488,8 +3488,9 @@ pub struct AttrInfo {
     pub definition: AttrDefinition,
     /// is this defined in another module (true) or in this module (false)?
     pub is_reexport: bool,
-    /// Is this attribute inherited from `object` rather than defined on a subclass?
-    pub is_from_object: bool,
+    /// Is this a member that the base has without its class declaring it: one inherited from
+    /// `object`, or, on a class object, a member of its metaclass?
+    pub is_implicit: bool,
 }
 
 impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
@@ -3504,7 +3505,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         let mut seen = SmallSet::new();
         for (i, c) in mro.enumerate() {
             // When the base itself is `object`, its attributes are its own, not inherited.
-            let is_from_object = i > 0 && c == self.stdlib.object().class_object();
+            let is_implicit = i > 0 && c == self.stdlib.object().class_object();
             let Some(class_fields) = self.get_class_fields(c) else {
                 continue;
             };
@@ -3524,7 +3525,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                                     docstring_range: class_fields.field_docstring_range(fld),
                                 },
                                 is_reexport: false,
-                                is_from_object,
+                                is_implicit,
                             });
                         }
                     }
@@ -3542,7 +3543,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                                     .field_docstring_range(expected_attribute_name),
                             },
                             is_reexport: false,
-                            is_from_object,
+                            is_implicit,
                         });
                     }
                 }
@@ -3626,7 +3627,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                         module_name: ModuleName::from_parts(submodule.parts()),
                     },
                     is_reexport: false,
-                    is_from_object: false,
+                    is_implicit: false,
                 });
                 return;
             }
@@ -3644,7 +3645,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                             module_name,
                         },
                         is_reexport: self.exports.reexport_source(module_name, name).is_some(),
-                        is_from_object: false,
+                        is_implicit: false,
                     });
                 }
             }
@@ -3658,7 +3659,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                             module_name,
                         },
                         is_reexport: self.exports.reexport_source(module_name, name).is_some(),
-                        is_from_object: false,
+                        is_implicit: false,
                     }));
                 }
             }
@@ -3670,14 +3671,14 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         base: AttributeBase,
         expected_attribute_name: Option<&Name>,
         include_types: bool,
-        include_object: bool,
+        include_implicit: bool,
         res: &mut Vec<AttrInfo>,
     ) {
         for base1 in &base.0 {
             self.completions_inner1(base1, expected_attribute_name, res);
         }
-        if !include_object {
-            res.retain(|info| !info.is_from_object);
+        if !include_implicit {
+            res.retain(|info| !info.is_implicit);
         }
         if include_types {
             for info in res {
@@ -3743,7 +3744,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                         is_deprecated: false,
                         definition: AttrDefinition::Synthetic,
                         is_reexport: false,
-                        is_from_object: false,
+                        is_implicit: false,
                     });
                 }
             }
@@ -3768,7 +3769,19 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 self.completions_class_type(q.class_type(self.stdlib), expected_attribute_name, res)
             }
             AttributeBase1::ClassObject(class) => {
-                self.completions_class(class.class_object(), expected_attribute_name, res)
+                let cls = class.class_object();
+                self.completions_class(cls, expected_attribute_name, res);
+                // A class object is an instance of its metaclass, so a lookup of one name also
+                // finds the metaclass's members, such as `__name__` and `__subclasses__`, as
+                // implicit members. A completion list leaves them out to stay short.
+                if expected_attribute_name.is_some() {
+                    let metaclass = self.get_metadata_for_class(cls).metaclass(self.stdlib);
+                    let start = res.len();
+                    self.completions_class_type(metaclass, expected_attribute_name, res);
+                    for info in &mut res[start..] {
+                        info.is_implicit = true;
+                    }
+                }
             }
             AttributeBase1::BoundMethod(bound_func) => {
                 self.completions_class_type(
@@ -3816,13 +3829,14 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
     }
     /// List all the attributes available from a type. Used to power completion.
     /// Not all usages need types, so we can skip type computation with `include_types=false`.
-    /// Attributes inherited from `object` are only listed when `include_object=true`.
+    /// Implicit members (see `AttrInfo::is_implicit`) are only listed when
+    /// `include_implicit=true`.
     pub fn completions(
         &self,
         base: Type,
         expected_attribute_name: Option<&Name>,
         include_types: bool,
-        include_object: bool,
+        include_implicit: bool,
     ) -> Vec<AttrInfo> {
         let annotated_fields = self.django_annotated_fields(&base);
         let mut res = Vec::new();
@@ -3831,7 +3845,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 base,
                 expected_attribute_name,
                 include_types,
-                include_object,
+                include_implicit,
                 &mut res,
             );
         }
@@ -3891,7 +3905,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 is_deprecated: false,
                 definition: AttrDefinition::Synthetic,
                 is_reexport: false,
-                is_from_object: false,
+                is_implicit: false,
             }));
         }
         for (name, ty) in annotated_fields {
@@ -3904,7 +3918,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                     is_deprecated: false,
                     definition: AttrDefinition::Synthetic,
                     is_reexport: false,
-                    is_from_object: false,
+                    is_implicit: false,
                 });
             }
         }
