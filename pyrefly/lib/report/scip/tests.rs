@@ -907,3 +907,506 @@ class C(B):
 "#,
     );
 }
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/builtin_import_refs.py.
+// Matches scip-python's output, except `typing.Any`, which pyrefly's typeshed declares as a
+// class rather than a variable (`stdlib-same-name` in scip-goal/ADJUDICATIONS.md).
+#[test]
+fn test_ported_builtin_import_refs() {
+    assert_index(
+        &[(
+            "builtin_import_refs",
+            r#"from typing import Any
+
+print(Any)
+"#,
+        )],
+        r#"
+# builtin_import_refs.py
+# < definition scip-python python snapshot-util 0.1 builtin_import_refs/__init__:
+from typing import Any
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^ reference[import]  python-stdlib 3.12 typing/Any#
+
+print(Any)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^ reference  python-stdlib 3.12 typing/Any#
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/multiinherits_test.py.
+// The occurrences and relationships match scip-python's.
+#[test]
+fn test_ported_multiinherits_test() {
+    assert_index(
+        &[(
+            "multiinherits_test",
+            r#"class Left:
+    def one(self) -> int:
+        return 1
+
+    def shared(self) -> bool:
+        return False
+
+class Right:
+    def two(self):
+        return 2
+
+    def shared(self) -> bool:
+        return False
+
+class Multi(Left, Right):
+    def one(self) -> int:
+        return 1
+
+    def two(self):
+        return 2
+
+    def three(self):
+        return 3
+
+    def shared(self) -> bool:
+        return True
+"#,
+        )],
+        r#"
+# multiinherits_test.py
+# < definition scip-python python snapshot-util 0.1 multiinherits_test/__init__:
+class Left:
+#     ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#
+#      enclosing [0, 0, 5, 20]
+    def one(self) -> int:
+#       ^^^ definition  snapshot-util 0.1 multiinherits_test/Left#one().
+#        enclosing [1, 4, 2, 16]
+#           ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#one().(self)
+#                    ^^^ reference  python-stdlib 3.12 builtins/int#
+        return 1
+
+    def shared(self) -> bool:
+#       ^^^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#shared().
+#        enclosing [4, 4, 5, 20]
+#              ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#shared().(self)
+#                       ^^^^ reference  python-stdlib 3.12 builtins/bool#
+        return False
+
+class Right:
+#     ^^^^^ definition  snapshot-util 0.1 multiinherits_test/Right#
+#      enclosing [7, 0, 12, 20]
+    def two(self):
+#       ^^^ definition  snapshot-util 0.1 multiinherits_test/Right#two().
+#        enclosing [8, 4, 9, 16]
+#           ^^^^ definition  snapshot-util 0.1 multiinherits_test/Right#two().(self)
+        return 2
+
+    def shared(self) -> bool:
+#       ^^^^^^ definition  snapshot-util 0.1 multiinherits_test/Right#shared().
+#        enclosing [11, 4, 12, 20]
+#              ^^^^ definition  snapshot-util 0.1 multiinherits_test/Right#shared().(self)
+#                       ^^^^ reference  python-stdlib 3.12 builtins/bool#
+        return False
+
+class Multi(Left, Right):
+#     ^^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#
+#      enclosing [14, 0, 25, 19]
+#      relationship implementation  snapshot-util 0.1 multiinherits_test/Left#
+#      relationship implementation  snapshot-util 0.1 multiinherits_test/Right#
+#           ^^^^ reference  snapshot-util 0.1 multiinherits_test/Left#
+#                 ^^^^^ reference  snapshot-util 0.1 multiinherits_test/Right#
+    def one(self) -> int:
+#       ^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#one().
+#        enclosing [15, 4, 16, 16]
+#        relationship implementation  snapshot-util 0.1 multiinherits_test/Left#one().
+#           ^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#one().(self)
+#                    ^^^ reference  python-stdlib 3.12 builtins/int#
+        return 1
+
+    def two(self):
+#       ^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#two().
+#        enclosing [18, 4, 19, 16]
+#        relationship implementation  snapshot-util 0.1 multiinherits_test/Right#two().
+#           ^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#two().(self)
+        return 2
+
+    def three(self):
+#       ^^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#three().
+#        enclosing [21, 4, 22, 16]
+#             ^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#three().(self)
+        return 3
+
+    def shared(self) -> bool:
+#       ^^^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#shared().
+#        enclosing [24, 4, 25, 19]
+#        relationship implementation  snapshot-util 0.1 multiinherits_test/Left#shared().
+#              ^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#shared().(self)
+#                       ^^^^ reference  python-stdlib 3.12 builtins/bool#
+        return True
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/property_access.py.
+// Matches scip-python's output.
+#[test]
+fn test_ported_property_access() {
+    assert_index(
+        &[(
+            "property_access",
+            r#"from typing import Sequence
+
+class PropertyClass:
+    def __init__(self):
+        pass
+
+    @property
+    def prop_ref(self):
+        return 5
+
+
+xs = [PropertyClass()]
+
+def usage(xs: Sequence[PropertyClass]):
+    def nested():
+        for x in xs:
+            print(x.prop_ref)
+"#,
+        )],
+        r#"
+# property_access.py
+# < definition scip-python python snapshot-util 0.1 property_access/__init__:
+from typing import Sequence
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^^^^^^ reference[import]  python-stdlib 3.12 typing/Sequence#
+
+class PropertyClass:
+#     ^^^^^^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#
+#      enclosing [2, 0, 8, 16]
+    def __init__(self):
+#       ^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#__init__().
+#        enclosing [3, 4, 4, 12]
+#                ^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#__init__().(self)
+        pass
+
+    @property
+#    ^^^^^^^^ reference  python-stdlib 3.12 builtins/property#
+    def prop_ref(self):
+#       ^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
+#        enclosing [7, 4, 8, 16]
+#                ^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#prop_ref().(self)
+        return 5
+
+
+xs = [PropertyClass()]
+#^ definition  snapshot-util 0.1 property_access/xs.
+# enclosing [11, 0, 22]
+#     ^^^^^^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#
+
+def usage(xs: Sequence[PropertyClass]):
+#   ^^^^^ definition  snapshot-util 0.1 property_access/usage().
+#    enclosing [13, 0, 16, 29]
+#         ^^ definition  snapshot-util 0.1 property_access/usage().(xs)
+#             ^^^^^^^^ reference  python-stdlib 3.12 typing/Sequence#
+#                      ^^^^^^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#
+    def nested():
+#       ^^^^^^ definition  snapshot-util 0.1 property_access/usage().nested().
+#        enclosing [14, 4, 16, 29]
+        for x in xs:
+#           ^ definition local 0
+#                ^^ reference  snapshot-util 0.1 property_access/usage().(xs)
+            print(x.prop_ref)
+#           ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#                 ^ reference local 0
+#                   ^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/vars_inside_scopes.py.
+// Matches scip-python's output.
+#[test]
+fn test_ported_vars_inside_scopes() {
+    assert_index(
+        &[(
+            "vars_inside_scopes",
+            r#"from typing import List
+
+class X:
+    items: List[int]
+
+    def my_func(self):
+        for x in self.items:
+            y = x + 1
+
+        if 5 in self.items:
+            z = "oh ya"
+"#,
+        )],
+        r#"
+# vars_inside_scopes.py
+# < definition scip-python python snapshot-util 0.1 vars_inside_scopes/__init__:
+from typing import List
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^^ reference[import]  python-stdlib 3.12 typing/List.
+
+class X:
+#     ^ definition  snapshot-util 0.1 vars_inside_scopes/X#
+#      enclosing [2, 0, 10, 23]
+    items: List[int]
+#   ^^^^^ definition  snapshot-util 0.1 vars_inside_scopes/X#items.
+#    enclosing [3, 4, 20]
+#          ^^^^ reference  python-stdlib 3.12 typing/List.
+#               ^^^ reference  python-stdlib 3.12 builtins/int#
+
+    def my_func(self):
+#       ^^^^^^^ definition  snapshot-util 0.1 vars_inside_scopes/X#my_func().
+#        enclosing [5, 4, 10, 23]
+#               ^^^^ definition  snapshot-util 0.1 vars_inside_scopes/X#my_func().(self)
+        for x in self.items:
+#           ^ definition local 0
+#                ^^^^ reference  snapshot-util 0.1 vars_inside_scopes/X#my_func().(self)
+#                     ^^^^^ reference  snapshot-util 0.1 vars_inside_scopes/X#items.
+            y = x + 1
+#           ^ definition local 1
+#               ^ reference local 0
+
+        if 5 in self.items:
+#               ^^^^ reference  snapshot-util 0.1 vars_inside_scopes/X#my_func().(self)
+#                    ^^^^^ reference  snapshot-util 0.1 vars_inside_scopes/X#items.
+            z = "oh ya"
+#           ^ definition local 2
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/walrus.py.
+// Differs from scip-python's output where scip-python is wrong: it gives the builtins `len`,
+// `input` and `any` called around a walrus local symbols without definitions, which also
+// shifts its numbering of the other locals, and it names `any_n`, bound by a walrus in a
+// generator expression at module level, `any_n.` without the module.
+#[test]
+fn test_ported_walrus() {
+    assert_index(
+        &[(
+            "walrus",
+            r#"import re
+
+some_list = [1, 2, 3, 4, 5, 100, 1000]
+pattern = "^[A-Za-z0-9_]*$"
+text = "Some_name123"
+
+# if statement
+if (n := len(some_list)) > 10:
+    print(f"List is too long with {n} elements.")
+
+if (match := re.search(pattern, text)) is not None:
+    print("Found match:", match.group(0))
+
+
+# comprehensions
+def show_some_comprehension():
+    [print(x, root) for x in some_list if (x % 2 == 0) and (root := x**0.5) > 5]
+
+
+# while loop
+while (line := input("Enter text: ")) != "quit":
+    print(f"You entered: {line}")
+
+
+# if + comprehension
+if any((any_n := num) < 0 for num in some_list):
+    print(f"Negative number found: {any_n}")
+"#,
+        )],
+        r#"
+# walrus.py
+# < definition scip-python python snapshot-util 0.1 walrus/__init__:
+import re
+#      ^^ reference[import]  python-stdlib 3.12 re/__init__:
+
+some_list = [1, 2, 3, 4, 5, 100, 1000]
+#^^^^^^^^ definition  snapshot-util 0.1 walrus/some_list.
+# enclosing [2, 0, 38]
+pattern = "^[A-Za-z0-9_]*$"
+#^^^^^^ definition  snapshot-util 0.1 walrus/pattern.
+# enclosing [3, 0, 27]
+text = "Some_name123"
+#^^^ definition  snapshot-util 0.1 walrus/text.
+# enclosing [4, 0, 21]
+
+# if statement
+if (n := len(some_list)) > 10:
+#   ^ definition  snapshot-util 0.1 walrus/n.
+#    enclosing [7, 0, 8, 49]
+#        ^^^ reference  python-stdlib 3.12 builtins/len().
+#            ^^^^^^^^^ reference  snapshot-util 0.1 walrus/some_list.
+    print(f"List is too long with {n} elements.")
+#   ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#                                  ^ reference  snapshot-util 0.1 walrus/n.
+
+if (match := re.search(pattern, text)) is not None:
+#   ^^^^^ definition  snapshot-util 0.1 walrus/match.
+#    enclosing [10, 0, 11, 41]
+#            ^^ reference  python-stdlib 3.12 re/__init__:
+#               ^^^^^^ reference  python-stdlib 3.12 re/search().
+#                      ^^^^^^^ reference  snapshot-util 0.1 walrus/pattern.
+#                               ^^^^ reference  snapshot-util 0.1 walrus/text.
+    print("Found match:", match.group(0))
+#   ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#                         ^^^^^ reference  snapshot-util 0.1 walrus/match.
+#                               ^^^^^ reference  python-stdlib 3.12 re/Match#group().
+
+
+# comprehensions
+def show_some_comprehension():
+#   ^^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 walrus/show_some_comprehension().
+#    enclosing [15, 0, 16, 80]
+    [print(x, root) for x in some_list if (x % 2 == 0) and (root := x**0.5) > 5]
+#    ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#          ^ reference local 0
+#             ^^^^ reference local 1
+#                       ^ definition local 0
+#                            ^^^^^^^^^ reference  snapshot-util 0.1 walrus/some_list.
+#                                          ^ reference local 0
+#                                                           ^^^^ definition local 1
+#                                                                   ^ reference local 0
+
+
+# while loop
+while (line := input("Enter text: ")) != "quit":
+#      ^^^^ definition  snapshot-util 0.1 walrus/line.
+#       enclosing [20, 0, 21, 33]
+#              ^^^^^ reference  python-stdlib 3.12 builtins/input().
+    print(f"You entered: {line}")
+#   ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#                         ^^^^ reference  snapshot-util 0.1 walrus/line.
+
+
+# if + comprehension
+if any((any_n := num) < 0 for num in some_list):
+#  ^^^ reference  python-stdlib 3.12 builtins/any().
+#       ^^^^^ definition  snapshot-util 0.1 walrus/any_n.
+#        enclosing [25, 0, 26, 44]
+#                ^^^ reference local 2
+#                             ^^^ definition local 2
+#                                    ^^^^^^^^^ reference  snapshot-util 0.1 walrus/some_list.
+    print(f"Negative number found: {any_n}")
+#   ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#                                   ^^^^^ reference  snapshot-util 0.1 walrus/any_n.
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/field_docstring.py.
+// The occurrences match scip-python's. Its documentation is laid out differently; the report's
+// layout is the one Narrate parses, which the bench's consumer check (C1) verifies.
+#[test]
+fn test_ported_field_docstring() {
+    assert_index(
+        &[(
+            "field_docstring",
+            r#"# format-options: showDocs
+
+class ClassWithField:
+
+    a: int
+    """Hello world, this is a"""
+"#,
+        )],
+        r#"
+# field_docstring.py
+# < definition scip-python python snapshot-util 0.1 field_docstring/__init__:
+# format-options: showDocs
+
+class ClassWithField:
+#     ^^^^^^^^^^^^^^ definition  snapshot-util 0.1 field_docstring/ClassWithField#
+#      enclosing [2, 0, 5, 32]
+
+    a: int
+#   ^ definition  snapshot-util 0.1 field_docstring/ClassWithField#a.
+#    enclosing [4, 4, 10]
+#      ^^^ reference  python-stdlib 3.12 builtins/int#
+    """Hello world, this is a"""
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/inferred_field_docstring.py.
+// The occurrences match scip-python's. Its documentation is laid out differently; the report's
+// layout is the one Narrate parses, which the bench's consumer check (C1) verifies.
+#[test]
+fn test_ported_inferred_field_docstring() {
+    assert_index(
+        &[(
+            "inferred_field_docstring",
+            r#"# format-options: showDocs
+
+class ClassWithInferredField:
+    def __init__(self, b: int):
+        self.b = b
+"#,
+        )],
+        r#"
+# inferred_field_docstring.py
+# < definition scip-python python snapshot-util 0.1 inferred_field_docstring/__init__:
+# format-options: showDocs
+
+class ClassWithInferredField:
+#     ^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#
+#      enclosing [2, 0, 4, 18]
+    def __init__(self, b: int):
+#       ^^^^^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().
+#        enclosing [3, 4, 4, 18]
+#                ^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(self)
+#                      ^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(b)
+#                         ^^^ reference  python-stdlib 3.12 builtins/int#
+        self.b = b
+#       ^^^^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(self)
+#            ^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#b.
+#             enclosing [4, 8, 18]
+#                ^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(b)
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unique/module_docstring.py.
+// The occurrences match scip-python's. Its documentation is laid out differently; the report's
+// layout is the one Narrate parses, which the bench's consumer check (C1) verifies.
+#[test]
+fn test_ported_module_docstring() {
+    assert_index(
+        &[(
+            "module_docstring",
+            r#"# format-options: showDocs
+
+"""
+This is a docstring for this module
+"""
+
+def x():
+    return 1
+"#,
+        )],
+        r#"
+# module_docstring.py
+# < definition scip-python python snapshot-util 0.1 module_docstring/__init__:
+# format-options: showDocs
+
+"""
+This is a docstring for this module
+"""
+
+def x():
+#   ^ definition  snapshot-util 0.1 module_docstring/x().
+#    enclosing [6, 0, 7, 12]
+    return 1
+"#,
+    );
+}
