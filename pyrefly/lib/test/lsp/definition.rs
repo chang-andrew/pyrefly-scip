@@ -5188,3 +5188,46 @@ object.__setattr__
         "missing definition of `object.__setattr__`:\n{report}"
     );
 }
+
+#[test]
+fn keyword_argument_test_inherited_typed_dict_key_and_new() {
+    let code = r#"
+from typing import TypedDict
+
+class Base(TypedDict):
+    clinic: int
+
+class Child(Base):
+    client: int
+
+class Counter:
+    def __new__(cls, start: int = 0) -> "Counter": ...
+
+class SubCounter(Counter): ...
+
+def test() -> None:
+    Child(clinic=1, client=2)
+#         ^
+    SubCounter(start=1)
+#              ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+16 |     Child(clinic=1, client=2)
+               ^
+Definition Result:
+5 |     clinic: int
+        ^^^^^^
+
+18 |     SubCounter(start=1)
+                    ^
+Definition Result:
+11 |     def __new__(cls, start: int = 0) -> "Counter": ...
+                          ^^^^^
+"#
+        .trim(),
+        report.trim(),
+    );
+}

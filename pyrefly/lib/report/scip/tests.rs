@@ -555,6 +555,91 @@ make(color="red", extra=2)
     );
 }
 
+/// A keyword argument to a class that does not declare it refers to the inherited key of a
+/// TypedDict, or to the parameter of the `__new__` that the class inherits or defines.
+#[test]
+fn test_inherited_keyword_arguments() {
+    assert_index(
+        &[(
+            "kwargs",
+            r#"
+from typing import TypedDict
+
+class Base(TypedDict):
+    clinic: int
+
+class Child(Base):
+    client: int
+
+class Counter:
+    def __new__(cls, start: int = 0) -> "Counter": ...
+
+class SubCounter(Counter): ...
+
+Child(clinic=1, client=2)
+SubCounter(start=1)
+enumerate([], start=1)
+"#,
+        )],
+        r#"
+# kwargs.py
+# < definition scip-python python snapshot-util 0.1 kwargs/__init__:
+
+from typing import TypedDict
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^^^^^^^ reference[import]  python-stdlib 3.12 typing/TypedDict.
+
+class Base(TypedDict):
+#     ^^^^ definition  snapshot-util 0.1 kwargs/Base#
+#      enclosing [3, 0, 4, 15]
+#      relationship implementation  python-stdlib 3.12 `_typeshed._type_checker_internals`/TypedDictFallback#
+#          ^^^^^^^^^ reference  python-stdlib 3.12 typing/TypedDict.
+    clinic: int
+#   ^^^^^^ definition  snapshot-util 0.1 kwargs/Base#clinic.
+#    enclosing [4, 4, 15]
+#           ^^^ reference  python-stdlib 3.12 builtins/int#
+
+class Child(Base):
+#     ^^^^^ definition  snapshot-util 0.1 kwargs/Child#
+#      enclosing [6, 0, 7, 15]
+#      relationship implementation  snapshot-util 0.1 kwargs/Base#
+#           ^^^^ reference  snapshot-util 0.1 kwargs/Base#
+    client: int
+#   ^^^^^^ definition  snapshot-util 0.1 kwargs/Child#client.
+#    enclosing [7, 4, 15]
+#           ^^^ reference  python-stdlib 3.12 builtins/int#
+
+class Counter:
+#     ^^^^^^^ definition  snapshot-util 0.1 kwargs/Counter#
+#      enclosing [9, 0, 10, 54]
+    def __new__(cls, start: int = 0) -> "Counter": ...
+#       ^^^^^^^ definition  snapshot-util 0.1 kwargs/Counter#__new__().
+#        enclosing [10, 4, 54]
+#               ^^^ definition  snapshot-util 0.1 kwargs/Counter#__new__().(cls)
+#                    ^^^^^ definition  snapshot-util 0.1 kwargs/Counter#__new__().(start)
+#                           ^^^ reference  python-stdlib 3.12 builtins/int#
+#                                        ^^^^^^^ reference  snapshot-util 0.1 kwargs/Counter#
+
+class SubCounter(Counter): ...
+#     ^^^^^^^^^^ definition  snapshot-util 0.1 kwargs/SubCounter#
+#      enclosing [12, 0, 30]
+#      relationship implementation  snapshot-util 0.1 kwargs/Counter#
+#                ^^^^^^^ reference  snapshot-util 0.1 kwargs/Counter#
+
+Child(clinic=1, client=2)
+#^^^^ reference  snapshot-util 0.1 kwargs/Child#
+#     ^^^^^^ reference  snapshot-util 0.1 kwargs/Base#clinic.
+#               ^^^^^^ reference  snapshot-util 0.1 kwargs/Child#client.
+SubCounter(start=1)
+#^^^^^^^^^ reference  snapshot-util 0.1 kwargs/SubCounter#
+#          ^^^^^ reference  snapshot-util 0.1 kwargs/Counter#__new__().(start)
+enumerate([], start=1)
+#^^^^^^^^ reference  python-stdlib 3.12 builtins/enumerate#
+#             ^^^^^ reference  python-stdlib 3.12 builtins/enumerate#__new__().(start)
+"#,
+    );
+}
+
 #[test]
 fn test_module_and_lambda_references() {
     assert_index(

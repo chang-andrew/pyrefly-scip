@@ -106,6 +106,8 @@ use crate::state::require::Require;
 use crate::state::state::CancellableTransaction;
 use crate::state::state::Transaction;
 use crate::state::state::TransactionHandle;
+use crate::types::callable::Param;
+use crate::types::callable::Params;
 use crate::types::module::ModuleType;
 use crate::types::type_var::Restriction;
 use crate::types::types::Type;
@@ -1359,13 +1361,16 @@ impl<'a> Transaction<'a> {
         None
     }
 
-    /// The `__init__` method that a class callee inherits from the nearest class in its MRO
-    /// that defines one.
-    fn inherited_init_location(
+    /// The definition that a keyword argument of a class callee refers to when the class's
+    /// own body has none: a parameter of the `__init__` or `__new__` it inherits, or, when
+    /// its `__init__` is synthesized (dataclasses, TypedDicts, classes with an unknown base),
+    /// a field it inherits.
+    fn inherited_keyword_argument_definition(
         &self,
         handle: &Handle,
         callee_kind: &CalleeKind,
-    ) -> Option<TextRangeWithModule> {
+        identifier: &Identifier,
+    ) -> Option<(DefinitionMetadata, TextRangeWithModule)> {
         let callee_range = match callee_kind {
             CalleeKind::Function(name) => name.range,
             CalleeKind::Method(base_range, name) => {
@@ -1376,17 +1381,54 @@ impl<'a> Transaction<'a> {
         let Type::ClassDef(class) = self.get_type_trace(handle, callee_range)? else {
             return None;
         };
-        self.ad_hoc_solve(handle, "inherited_init_location", |solver| {
-            let init = solver.get_class_member_with_defining_class(&class, &dunder::INIT)?;
-            let range = solver
-                .get_class_fields(&init.defining_class)?
-                .field_decl_range(&dunder::INIT)?;
-            Some(TextRangeWithModule::new(
-                init.defining_class.module().dupe(),
-                range,
-            ))
-        })
-        .flatten()
+        // A constructor whose signature has no parameter of the keyword's name is skipped
+        // before its module is parsed, because a module that is not open, such as a stub, is
+        // parsed again on every lookup.
+        let takes_keyword = |ty: Type| {
+            ty.toplevel_callable_signatures()
+                .any(|(callable, _)| match &callable.params {
+                    Params::List(params) | Params::Partial(params) => {
+                        params.items().iter().any(|param| match param {
+                            Param::Pos(name, ..) | Param::KwOnly(name, ..) => {
+                                name == identifier.id()
+                            }
+                            Param::PosOnly(..) | Param::Varargs(..) | Param::Kwargs(..) => false,
+                        })
+                    }
+                    Params::Ellipsis | Params::Materialization | Params::ParamSpec(..) => false,
+                })
+        };
+        let [init, new, field] =
+            self.ad_hoc_solve(handle, "inherited_keyword_argument_definition", |solver| {
+                [&dunder::INIT, &dunder::NEW, identifier.id()].map(|name| {
+                    let member = solver.get_class_member_with_defining_class(&class, name)?;
+                    let range = solver
+                        .get_class_fields(&member.defining_class)?
+                        .field_decl_range(name)?;
+                    Some((
+                        member.value.ty(),
+                        TextRangeWithModule::new(member.defining_class.module().dupe(), range),
+                    ))
+                })
+            })?;
+        let synthesized_init = init.is_none();
+        [init, new]
+            .into_iter()
+            .flatten()
+            .filter_map(|(ty, constructor)| takes_keyword(ty).then_some(constructor))
+            .find_map(|constructor| {
+                let ast = self.get_ast_or_parse_module(handle, &constructor.module);
+                let range =
+                    self.refine_param_location_for_callee(&ast, constructor.range, identifier)?;
+                Some((
+                    DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
+                    TextRangeWithModule::new(constructor.module, range),
+                ))
+            })
+            .or_else(|| {
+                let (_, field) = field?;
+                synthesized_init.then_some((DefinitionMetadata::Attribute, field))
+            })
     }
 
     fn refine_keyword_argument_definition_for_callee(
@@ -2950,22 +2992,13 @@ impl<'a> Transaction<'a> {
                         DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
                         param_range,
                     )
-                } else if let Some(TextRangeWithModule {
-                    module: init_module,
-                    range: init_range,
-                }) = self.inherited_init_location(handle, callee_kind)
-                    && let Some(param_range) = self.refine_param_location_for_callee(
-                        self.get_ast_or_parse_module(handle, &init_module).as_ref(),
-                        init_range,
-                        identifier,
-                    )
+                } else if let Some((metadata, TextRangeWithModule { module, range })) =
+                    self.inherited_keyword_argument_definition(handle, callee_kind, identifier)
                 {
-                    // A class without its own `__init__` passes keyword arguments to the one
-                    // it inherits.
                     results.push(FindDefinitionItem {
-                        metadata: DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
-                        definition_range: param_range,
-                        module: init_module,
+                        metadata,
+                        definition_range: range,
+                        module,
                     });
                     continue;
                 } else {
