@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::mem;
 
 use itertools::Itertools;
+use pyrefly_python::docstring::Docstring;
 use ruff_python_ast::Comprehension;
 use ruff_python_ast::Decorator;
 use ruff_python_ast::ExceptHandler;
@@ -91,6 +92,26 @@ pub enum SiteRole {
     Declaration,
 }
 
+/// The source text that documents a definition.
+#[derive(Debug, Clone)]
+pub enum Detail {
+    /// A function: its decorators and `def` line without the return annotation and the
+    /// final colon, its return annotation, and its docstring.
+    Function {
+        header: String,
+        returns: Option<String>,
+        is_async: bool,
+        docstring: Option<TextRange>,
+    },
+    /// A class: its decorators and complete `class` line, and its docstring.
+    Class {
+        header: String,
+        docstring: Option<TextRange>,
+    },
+    /// The annotation of an annotated variable.
+    Annotation(String),
+}
+
 /// A site that binds or declares a name.
 #[derive(Debug, Clone)]
 pub struct Site {
@@ -100,6 +121,12 @@ pub struct Site {
     /// The whole definition: a class or function from its keyword to the end of its body,
     /// or the statement that binds a global variable.
     pub enclosing_range: Option<TextRange>,
+    pub detail: Option<Detail>,
+}
+
+/// `text` on one line, with every run of whitespace replaced by a single space.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().join(" ")
 }
 
 /// The binding sites of one module, keyed by the range of their identifier.
@@ -145,10 +172,11 @@ struct Binding {
 enum ScopeKind {
     Module,
     /// A class body, with the class's descriptors and the instance attributes that its
-    /// methods assign through `self` (name, identifier range, statement range).
+    /// methods assign through `self` (name, identifier range, statement range and
+    /// annotation).
     Class {
         descriptors: String,
-        attributes: Vec<(Name, TextRange, TextRange)>,
+        attributes: Vec<(Name, TextRange, TextRange, Option<String>)>,
     },
     /// A function body, with the function's descriptors, the name of its `self` parameter
     /// when it is a method, and the names it declares `global` or `nonlocal`.
@@ -245,17 +273,12 @@ impl Collector<'_> {
         }
     }
 
-    /// Records a binding of `name` at `range` in `scope`. The first binding of a name gives
-    /// it `symbol` and is its definition; later bindings reuse the name's symbol.
-    fn bind(
-        &mut self,
-        scope: usize,
-        name: &Name,
-        range: TextRange,
-        kind: SiteKind,
-        symbol: SiteSymbol,
-        enclosing_range: Option<TextRange>,
-    ) -> SiteSymbol {
+    /// Records a binding of `name` at `range` in `scope`, described by `site`. The first
+    /// binding of a name gives it `site.symbol` and is its definition; later bindings reuse
+    /// the name's symbol and are writes.
+    fn bind(&mut self, scope: usize, name: &Name, range: TextRange, site: Site) -> SiteSymbol {
+        let Site { symbol, .. } = &site;
+        let symbol = symbol.clone();
         let (symbol, first) = match self.scopes[scope].names.get_mut(name) {
             Some(binding) => {
                 let first = !binding.bound;
@@ -281,21 +304,42 @@ impl Collector<'_> {
             range,
             Site {
                 symbol: symbol.clone(),
-                kind,
                 role: if first {
                     SiteRole::Definition
                 } else {
                     SiteRole::Write
                 },
-                enclosing_range,
+                ..site
             },
         );
         symbol
     }
 
+    /// A site template for [`Collector::bind`], whose role `bind` decides.
+    fn site(
+        symbol: SiteSymbol,
+        kind: SiteKind,
+        enclosing_range: Option<TextRange>,
+        detail: Option<Detail>,
+    ) -> Site {
+        Site {
+            symbol,
+            kind,
+            role: SiteRole::Definition,
+            enclosing_range,
+            detail,
+        }
+    }
+
     /// Binds a variable named `name` at `range`, from an assignment, a loop, a `with`, an
-    /// `except`, a pattern or a walrus.
-    fn bind_variable(&mut self, name: &Name, range: TextRange, walrus: bool) {
+    /// `except`, a pattern or a walrus, with the annotation of an annotated assignment.
+    fn bind_variable(
+        &mut self,
+        name: &Name,
+        range: TextRange,
+        walrus: bool,
+        annotation: Option<String>,
+    ) {
         let scope = self.binding_scope(name, walrus);
         let symbol = match self.scopes[scope].names.get(name) {
             Some(binding) => binding.symbol.clone(),
@@ -309,7 +353,17 @@ impl Collector<'_> {
             SiteSymbol::Global(_) => self.statements.last().copied(),
             SiteSymbol::Local(_) => None,
         };
-        self.bind(scope, name, range, kind, symbol, enclosing_range);
+        self.bind(
+            scope,
+            name,
+            range,
+            Self::site(
+                symbol,
+                kind,
+                enclosing_range,
+                annotation.map(Detail::Annotation),
+            ),
+        );
     }
 
     /// Records a `global` or `nonlocal` name, which refers to the symbol of the module or of
@@ -349,6 +403,7 @@ impl Collector<'_> {
                 kind: SiteKind::Variable,
                 role: SiteRole::Declaration,
                 enclosing_range: None,
+                detail: None,
             },
         );
     }
@@ -381,6 +436,60 @@ impl Collector<'_> {
         )
     }
 
+    /// The source text of an optional node, on one line.
+    fn text_of(&self, node: Option<&impl Ranged>) -> String {
+        node.map_or_else(String::new, |node| one_line(&self.contents[node.range()]))
+    }
+
+    /// The decorators of a definition, one per line, as written.
+    fn decorator_lines(&self, decorators: &[Decorator]) -> String {
+        decorators
+            .iter()
+            .map(|decorator| format!("{}\n", &self.contents[decorator.range]))
+            .collect()
+    }
+
+    /// A function's decorators and `def` line, with one parameter per line as scip-python
+    /// writes them, without the return annotation and the final colon.
+    fn function_header(&self, function: &StmtFunctionDef) -> String {
+        let parameters = &function.parameters;
+        let text = |range: TextRange| one_line(&self.contents[range]);
+        let mut items: Vec<String> = parameters
+            .posonlyargs
+            .iter()
+            .map(|p| text(p.range))
+            .collect();
+        if !items.is_empty() {
+            items.push("/".to_owned());
+        }
+        items.extend(parameters.args.iter().map(|p| text(p.range)));
+        match &parameters.vararg {
+            Some(vararg) => items.push(text(vararg.range)),
+            None if !parameters.kwonlyargs.is_empty() => items.push("*".to_owned()),
+            None => {}
+        }
+        items.extend(parameters.kwonlyargs.iter().map(|p| text(p.range)));
+        if let Some(kwarg) = &parameters.kwarg {
+            items.push(text(kwarg.range));
+        }
+        let parameters = if items.is_empty() {
+            "()".to_owned()
+        } else {
+            format!("(\n  {}\n)", items.join(",\n  "))
+        };
+        format!(
+            "{}{} {}{}{parameters}",
+            self.decorator_lines(&function.decorator_list),
+            if function.is_async {
+                "async def"
+            } else {
+                "def"
+            },
+            function.name,
+            self.text_of(function.type_params.as_deref()),
+        )
+    }
+
     fn bind_type_params(&mut self, type_params: Option<&TypeParams>, descriptors: &str) {
         let scope = self.scopes.len() - 1;
         for type_param in type_params.into_iter().flat_map(|t| &t.type_params) {
@@ -395,9 +504,7 @@ impl Collector<'_> {
                 scope,
                 name.id(),
                 name.range,
-                SiteKind::TypeParameter,
-                symbol,
-                None,
+                Self::site(symbol, SiteKind::TypeParameter, None, None),
             );
         }
     }
@@ -416,9 +523,7 @@ impl Collector<'_> {
                 scope,
                 name.id(),
                 name.range,
-                SiteKind::Parameter,
-                symbol,
-                None,
+                Self::site(symbol, SiteKind::Parameter, None, None),
             );
         }
     }
@@ -461,17 +566,29 @@ impl Collector<'_> {
         let is_method = matches!(self.scopes[current].kind, ScopeKind::Class { .. });
         let scope = self.binding_scope(function.name.id(), false);
         let enclosing_range = self.definition_range(function.range, &function.decorator_list);
+        let detail = Detail::Function {
+            header: self.function_header(function),
+            returns: function
+                .returns
+                .as_ref()
+                .map(|returns| one_line(&self.contents[returns.range()])),
+            is_async: function.is_async,
+            docstring: Docstring::range_from_stmts(&function.body),
+        };
         self.bind(
             scope,
             function.name.id(),
             function.name.range,
-            if is_method {
-                SiteKind::Method
-            } else {
-                SiteKind::Function
-            },
-            SiteSymbol::Global(descriptors.clone()),
-            Some(enclosing_range),
+            Self::site(
+                SiteSymbol::Global(descriptors.clone()),
+                if is_method {
+                    SiteKind::Method
+                } else {
+                    SiteKind::Function
+                },
+                Some(enclosing_range),
+                Some(detail),
+            ),
         );
         let is_static = function.decorator_list.iter().any(|decorator| {
             matches!(&decorator.expression, Expr::Name(name) if name.id == "staticmethod")
@@ -509,13 +626,26 @@ impl Collector<'_> {
         let descriptors = format!("{}{}#", self.owner(), escape_name(class.name.as_str()));
         let scope = self.binding_scope(class.name.id(), false);
         let enclosing_range = self.definition_range(class.range, &class.decorator_list);
+        let detail = Detail::Class {
+            header: format!(
+                "{}class {}{}{}:",
+                self.decorator_lines(&class.decorator_list),
+                class.name,
+                self.text_of(class.type_params.as_deref()),
+                self.text_of(class.arguments.as_deref()),
+            ),
+            docstring: Docstring::range_from_stmts(&class.body),
+        };
         self.bind(
             scope,
             class.name.id(),
             class.name.range,
-            SiteKind::Class,
-            SiteSymbol::Global(descriptors.clone()),
-            Some(enclosing_range),
+            Self::site(
+                SiteSymbol::Global(descriptors.clone()),
+                SiteKind::Class,
+                Some(enclosing_range),
+                Some(detail),
+            ),
         );
         self.scopes.push(Scope::new(ScopeKind::Class {
             descriptors: descriptors.clone(),
@@ -527,22 +657,25 @@ impl Collector<'_> {
         let ScopeKind::Class { attributes, .. } = &mut self.scopes[class_scope].kind else {
             unreachable!("the class scope was pushed above");
         };
-        for (name, range, statement) in mem::take(attributes) {
+        for (name, range, statement, annotation) in mem::take(attributes) {
             let symbol = SiteSymbol::Global(format!("{descriptors}{}.", escape_name(&name)));
             self.bind(
                 class_scope,
                 &name,
                 range,
-                SiteKind::Field,
-                symbol,
-                Some(statement),
+                Self::site(
+                    symbol,
+                    SiteKind::Field,
+                    Some(statement),
+                    annotation.map(Detail::Annotation),
+                ),
             );
         }
         self.scopes.pop();
     }
 
     /// Records `<self>.name = ...` in a method as an instance attribute of its class.
-    fn record_attribute(&mut self, attribute: &ExprAttribute) {
+    fn record_attribute(&mut self, attribute: &ExprAttribute, annotation: Option<String>) {
         let Expr::Name(receiver) = attribute.value.as_ref() else {
             return;
         };
@@ -565,6 +698,7 @@ impl Collector<'_> {
                     .statements
                     .last()
                     .expect("an assignment is a statement"),
+                annotation,
             ));
         }
     }
@@ -586,6 +720,23 @@ impl<'a> SourceOrderVisitor<'a> for Collector<'_> {
                     self.declare(name, false);
                 }
             }
+            Stmt::AnnAssign(assign) => {
+                self.visit_annotation(&assign.annotation);
+                if let Some(value) = &assign.value {
+                    self.visit_expr(value);
+                }
+                let annotation = one_line(&self.contents[assign.annotation.range()]);
+                match assign.target.as_ref() {
+                    Expr::Name(name) => {
+                        self.bind_variable(&name.id, name.range, false, Some(annotation));
+                    }
+                    Expr::Attribute(attribute) => {
+                        self.record_attribute(attribute, Some(annotation));
+                        self.visit_expr(&attribute.value);
+                    }
+                    target => self.visit_expr(target),
+                }
+            }
             // Imports bind names, but references to them resolve to what they import.
             Stmt::Import(_) | Stmt::ImportFrom(_) => {}
             _ => walk_stmt(self, stmt),
@@ -596,16 +747,16 @@ impl<'a> SourceOrderVisitor<'a> for Collector<'_> {
     fn visit_expr(&mut self, expr: &'a Expr) {
         match expr {
             Expr::Name(name) if name.ctx.is_store() => {
-                self.bind_variable(&name.id, name.range, false);
+                self.bind_variable(&name.id, name.range, false, None);
             }
             Expr::Named(named) => {
                 self.visit_expr(&named.value);
                 if let Expr::Name(name) = named.target.as_ref() {
-                    self.bind_variable(&name.id, name.range, true);
+                    self.bind_variable(&name.id, name.range, true, None);
                 }
             }
             Expr::Attribute(attribute) if attribute.ctx.is_store() => {
-                self.record_attribute(attribute);
+                self.record_attribute(attribute, None);
                 walk_expr(self, expr);
             }
             Expr::Lambda(lambda) => {
@@ -653,7 +804,7 @@ impl<'a> SourceOrderVisitor<'a> for Collector<'_> {
             self.visit_expr(type_);
         }
         if let Some(name) = &handler.name {
-            self.bind_variable(name.id(), name.range, false);
+            self.bind_variable(name.id(), name.range, false, None);
         }
         self.visit_body(&handler.body);
     }
@@ -667,7 +818,7 @@ impl<'a> SourceOrderVisitor<'a> for Collector<'_> {
         };
         walk_pattern(self, pattern);
         if let Some(name) = name {
-            self.bind_variable(name.id(), name.range, false);
+            self.bind_variable(name.id(), name.range, false, None);
         }
     }
 }

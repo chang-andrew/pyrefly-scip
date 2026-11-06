@@ -260,3 +260,200 @@ def generic[T](x: T) -> T:
 "#,
     );
 }
+
+#[test]
+fn test_symbol_documentation() {
+    assert_index_with_docs(
+        &[(
+            "docs",
+            r#"
+import functools
+from dataclasses import dataclass
+
+class Base:
+    """Base docs."""
+
+    limit: int = 1
+
+    def __init__(self, name: str, /, *, flag=False) -> None:
+        self.name = name
+        self.size: int = 0
+
+    @functools.cache
+    def method(self, a, *args, b: int = 2, **kwargs):
+        """Method docs."""
+        return [a]
+
+@dataclass(frozen=True)
+class Child(Base):
+    tag = "child"
+
+async def fetch() -> int:
+    return 1
+
+async def fetch_inferred():
+    return "x"
+
+VALUE = Child()
+"#,
+        )],
+        r#"
+# docs.py
+# < definition scip-python python snapshot-util 0.1 docs/__init__:
+# kind Module display_name docs
+# documentation (module) docs
+
+import functools
+from dataclasses import dataclass
+
+class Base:
+#     ^^^^ definition  snapshot-util 0.1 docs/Base#
+#      enclosing [4, 0, 16, 18]
+#      kind Class display_name Base
+#      signature class Base:
+#      documentation ```python
+#                    class Base:
+#                    ```
+#      documentation Base docs.
+    """Base docs."""
+
+    limit: int = 1
+#   ^^^^^ definition  snapshot-util 0.1 docs/Base#limit.
+#    enclosing [7, 4, 18]
+#    kind Field display_name limit
+#    signature limit: int
+#    documentation ```python
+#                  limit: int
+#                  ```
+
+    def __init__(self, name: str, /, *, flag=False) -> None:
+#       ^^^^^^^^ definition  snapshot-util 0.1 docs/Base#__init__().
+#        enclosing [9, 4, 11, 26]
+#        kind Method display_name __init__
+#        signature def __init__(
+#                    self,
+#                    name: str,
+#                    /,
+#                    *,
+#                    flag=False
+#                  ) -> None:
+#        documentation ```python
+#                      def __init__(
+#                        self,
+#                        name: str,
+#                        /,
+#                        *,
+#                        flag=False
+#                      ) -> None:
+#                      ```
+#                ^^^^ definition  snapshot-util 0.1 docs/Base#__init__().(self)
+#                 kind Parameter display_name self
+#                      ^^^^ definition  snapshot-util 0.1 docs/Base#__init__().(name)
+#                       kind Parameter display_name name
+#                                       ^^^^ definition  snapshot-util 0.1 docs/Base#__init__().(flag)
+#                                        kind Parameter display_name flag
+        self.name = name
+#            ^^^^ definition  snapshot-util 0.1 docs/Base#name.
+#             enclosing [10, 8, 24]
+#             kind Field display_name name
+#             signature name
+#             documentation ```python
+#                           name
+#                           ```
+        self.size: int = 0
+#            ^^^^ definition  snapshot-util 0.1 docs/Base#size.
+#             enclosing [11, 8, 26]
+#             kind Field display_name size
+#             signature size: int
+#             documentation ```python
+#                           size: int
+#                           ```
+
+    @functools.cache
+    def method(self, a, *args, b: int = 2, **kwargs):
+#       ^^^^^^ definition  snapshot-util 0.1 docs/Base#method().
+#        enclosing [14, 4, 16, 18]
+#        kind Method display_name method
+#        signature @functools.cache
+#                  def method(
+#                    self,
+#                    a,
+#                    *args,
+#                    b: int = 2,
+#                    **kwargs
+#                  ) -> list[Unknown]:
+#        documentation ```python
+#                      @functools.cache
+#                      def method(
+#                        self,
+#                        a,
+#                        *args,
+#                        b: int = 2,
+#                        **kwargs
+#                      ) -> list[Unknown]:
+#                      ```
+#        documentation Method docs.
+#              ^^^^ definition  snapshot-util 0.1 docs/Base#method().(self)
+#               kind Parameter display_name self
+#                    ^ definition  snapshot-util 0.1 docs/Base#method().(a)
+#                     kind Parameter display_name a
+#                        ^^^^ definition  snapshot-util 0.1 docs/Base#method().(args)
+#                         kind Parameter display_name args
+#                              ^ definition  snapshot-util 0.1 docs/Base#method().(b)
+#                               kind Parameter display_name b
+#                                            ^^^^^^ definition  snapshot-util 0.1 docs/Base#method().(kwargs)
+#                                             kind Parameter display_name kwargs
+        """Method docs."""
+        return [a]
+
+@dataclass(frozen=True)
+class Child(Base):
+#     ^^^^^ definition  snapshot-util 0.1 docs/Child#
+#      enclosing [19, 0, 20, 17]
+#      kind Class display_name Child
+#      signature @dataclass(frozen=True)
+#                class Child(Base):
+#      documentation ```python
+#                    @dataclass(frozen=True)
+#                    class Child(Base):
+#                    ```
+    tag = "child"
+#   ^^^ definition  snapshot-util 0.1 docs/Child#tag.
+#    enclosing [20, 4, 17]
+#    kind Field display_name tag
+#    signature tag: Literal['child']
+#    documentation ```python
+#                  tag: Literal['child']
+#                  ```
+
+async def fetch() -> int:
+#         ^^^^^ definition  snapshot-util 0.1 docs/fetch().
+#          enclosing [22, 0, 23, 12]
+#          kind Function display_name fetch
+#          signature async def fetch() -> int:
+#          documentation ```python
+#                        async def fetch() -> int:
+#                        ```
+    return 1
+
+async def fetch_inferred():
+#         ^^^^^^^^^^^^^^ definition  snapshot-util 0.1 docs/fetch_inferred().
+#          enclosing [25, 0, 26, 14]
+#          kind Function display_name fetch_inferred
+#          signature async def fetch_inferred() -> Literal['x']:
+#          documentation ```python
+#                        async def fetch_inferred() -> Literal['x']:
+#                        ```
+    return "x"
+
+VALUE = Child()
+#^^^^ definition  snapshot-util 0.1 docs/VALUE.
+# enclosing [28, 0, 15]
+# kind Variable display_name VALUE
+# signature VALUE: Child
+# documentation ```python
+#               VALUE: Child
+#               ```
+"#,
+    );
+}

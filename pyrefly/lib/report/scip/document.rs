@@ -19,15 +19,21 @@ use pyrefly_python::docstring::Docstring;
 use pyrefly_python::module::Module;
 use pyrefly_python::module_name::ModuleName;
 use pyrefly_python::module_path::ModulePath;
+use pyrefly_python::short_identifier::ShortIdentifier;
+use ruff_python_ast::Identifier;
 use ruff_text_size::TextRange;
 use scip::types::Document;
 use scip::types::Occurrence;
 use scip::types::PositionEncoding;
+use scip::types::Signature;
 use scip::types::SymbolInformation;
 use scip::types::SymbolRole;
 use scip::types::symbol_information::Kind;
 
+use crate::binding::binding::Key;
 use crate::report::scip::definitions::Definitions;
+use crate::report::scip::definitions::Detail;
+use crate::report::scip::definitions::Site;
 use crate::report::scip::definitions::SiteKind;
 use crate::report::scip::definitions::SiteRole;
 use crate::report::scip::definitions::SiteSymbol;
@@ -139,6 +145,70 @@ impl<'a> Indexer<'a> {
             .dupe()
     }
 
+    /// The signature of the definition of `name` at `range`, as Python source: the `def` or
+    /// `class` line with its decorators, or `name: type` for a variable. Types that are not
+    /// written in the source come from pyrefly's inference.
+    fn signature(
+        &self,
+        handle: &Handle,
+        module: &Module,
+        name: &str,
+        range: TextRange,
+        site: &Site,
+    ) -> Option<String> {
+        let answers = self.transaction.get_answers(handle);
+        let type_of = |key: Key| {
+            let answers = answers.as_ref()?;
+            let bindings = answers.bindings();
+            if !bindings.is_valid_key(&key) {
+                return None;
+            }
+            answers.get_type_at(bindings.key_to_idx(&key))
+        };
+        let identifier = ShortIdentifier::new(&Identifier::new(name, range));
+        match &site.detail {
+            Some(Detail::Function {
+                header,
+                returns,
+                is_async,
+                ..
+            }) => {
+                let returns = returns.clone().or_else(|| {
+                    let ty = type_of(Key::ReturnType(identifier))?;
+                    let ty = if *is_async {
+                        self.transaction
+                            .ad_hoc_solve(handle, "scip_coroutine", |solver| {
+                                solver.unwrap_coroutine(&ty)
+                            })
+                            .flatten()
+                            .map_or(ty, |(_, _, returns)| returns)
+                    } else {
+                        ty
+                    };
+                    Some(ty.to_string())
+                });
+                Some(match returns {
+                    Some(returns) => format!("{header} -> {returns}:"),
+                    None => format!("{header}:"),
+                })
+            }
+            Some(Detail::Class { header, .. }) => Some(header.clone()),
+            Some(Detail::Annotation(annotation)) => Some(format!("{name}: {annotation}")),
+            None => match site.kind {
+                SiteKind::Variable | SiteKind::Field => Some(
+                    match type_of(Key::Definition(identifier))
+                        .or_else(|| self.transaction.get_type_trace(handle, range))
+                    {
+                        Some(ty) => format!("{name}: {ty}"),
+                        None => name.to_owned(),
+                    },
+                ),
+                _ => None,
+            },
+        }
+        .filter(|_| module.code_at(range) == name)
+    }
+
     /// The document for `handle`, whose path relative to the project root is `relative_path`.
     pub fn document(&self, handle: &Handle, relative_path: String) -> Document {
         let module = self
@@ -181,10 +251,33 @@ impl<'a> Indexer<'a> {
                 enclosing_range,
             });
             if is_definition && let SiteSymbol::Global(descriptors) = &site.symbol {
+                let name = module.code_at(*range);
+                let mut documentation = Vec::new();
+                let signature = self.signature(handle, &module, name, *range, site);
+                if let Some(signature) = &signature {
+                    documentation.push(format!("```python\n{signature}\n```"));
+                }
+                if let Some(Detail::Function { docstring, .. } | Detail::Class { docstring, .. }) =
+                    &site.detail
+                    && let Some(docstring) = docstring
+                {
+                    let docstring = Docstring(*docstring, module.dupe());
+                    if docstring.has_content() {
+                        documentation.push(docstring.resolve());
+                    }
+                }
                 symbols.push(SymbolInformation {
                     symbol: self.project.symbol(descriptors),
+                    documentation,
                     kind: scip_kind(site.kind).into(),
-                    display_name: module.code_at(*range).to_owned(),
+                    display_name: name.to_owned(),
+                    signature_documentation: signature
+                        .map(|text| Signature {
+                            language: "python".to_owned(),
+                            text,
+                            ..Default::default()
+                        })
+                        .into(),
                     ..Default::default()
                 });
             }
