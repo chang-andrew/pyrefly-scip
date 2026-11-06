@@ -84,7 +84,7 @@ pub fn render(source: &str, document: &Document, show_docs: bool) -> String {
             };
             let width = end.saturating_sub(start).max(1);
             let prefix = if start == 0 {
-                format!("#{}", "^".repeat(width - 1))
+                format!("#{}", "^".repeat((width - 1).max(1)))
             } else {
                 format!("#{}{}", " ".repeat(start - 1), "^".repeat(width))
             };

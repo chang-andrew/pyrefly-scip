@@ -16,6 +16,7 @@
 //! length-delimited `Index.documents` field. Concatenated repeated fields form a valid
 //! `Index`, so the whole index is never held in memory.
 
+mod definitions;
 mod document;
 #[cfg(test)]
 mod snapshot;
@@ -43,7 +44,7 @@ use scip::types::TextEncoding;
 use scip::types::ToolInfo;
 
 use crate::VERSION;
-use crate::report::scip::document::document;
+use crate::report::scip::document::Indexer;
 use crate::report::scip::document::relative_path;
 use crate::report::scip::symbols::Package;
 use crate::state::state::Transaction;
@@ -100,6 +101,7 @@ pub fn write_scip(
         writer,
         result: Ok(()),
     });
+    let indexer = Indexer::new(transaction, project, root);
     let claimed = AtomicUsize::new(0);
     transaction.thread_pool().spawn_many(|| {
         loop {
@@ -107,7 +109,8 @@ pub fn write_scip(
             let Some((relative_path, handle)) = handles.get(index) else {
                 return;
             };
-            let bytes = document(transaction, handle, relative_path.clone(), &project)
+            let bytes = indexer
+                .document(handle, relative_path.clone())
                 .write_length_delimited_to_bytes()
                 .expect("encoding a SCIP document to memory cannot fail");
             let mut guard = pending.lock();
