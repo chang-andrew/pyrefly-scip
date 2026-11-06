@@ -102,6 +102,7 @@ use crate::state::lsp::FindPreference;
 fn pysa_find_preference() -> FindPreference {
     FindPreference {
         disable_style_fallback: true,
+        include_object_members: false,
         ..FindPreference::default()
     }
 }

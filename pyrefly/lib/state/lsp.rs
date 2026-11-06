@@ -308,6 +308,10 @@ pub struct FindPreference {
     /// which can open any file, but not consumers like Glean, which must
     /// target files inside the project.
     pub include_interpreter_stdlib: bool,
+    /// When true (the default), an attribute written in the source can resolve to a member
+    /// that its class inherits from `object`, such as `obj.__class__`. Pysa sets this to
+    /// false, because its call graph treats calls to those members as unresolved.
+    pub include_object_members: bool,
 }
 
 impl Default for FindPreference {
@@ -320,6 +324,7 @@ impl Default for FindPreference {
             replacement_policy: ImportReplacementPolicy::Respect,
             disable_style_fallback: false,
             include_interpreter_stdlib: false,
+            include_object_members: true,
         }
     }
 }
@@ -2366,6 +2371,7 @@ impl<'a> Transaction<'a> {
             preference,
             ty.clone(),
             &Name::new_static("forward"),
+            false,
         )
         .ok()
     }
@@ -2406,6 +2412,7 @@ impl<'a> Transaction<'a> {
                         preference,
                         ty.clone(),
                         &dunder::INIT,
+                        false,
                     )
                     .map(Vec1::into_vec)
                     .unwrap_or_default();
@@ -2415,6 +2422,7 @@ impl<'a> Transaction<'a> {
                         preference,
                         ty,
                         &dunder::NEW,
+                        false,
                     )
                     .map(Vec1::into_vec)
                     .unwrap_or_default(),
@@ -2427,9 +2435,15 @@ impl<'a> Transaction<'a> {
                 {
                     return defs.into_vec();
                 }
-                self.find_attribute_definition_for_base_type(handle, preference, ty, &dunder::CALL)
-                    .map(Vec1::into_vec)
-                    .unwrap_or_default()
+                self.find_attribute_definition_for_base_type(
+                    handle,
+                    preference,
+                    ty,
+                    &dunder::CALL,
+                    false,
+                )
+                .map(Vec1::into_vec)
+                .unwrap_or_default()
             }
             Type::NNModule(module) => self.find_call_target_definitions(
                 handle,
@@ -2473,16 +2487,23 @@ impl<'a> Transaction<'a> {
     /// Returns `Err(DefinitionNotFound)` if the attribute doesn't exist
     /// on any branch of a union type. The returned `Vec1` is guaranteed
     /// non-empty.
+    ///
+    /// `include_object` says whether a member that a class inherits from `object` counts.
+    /// It can for an attribute written in the source (`obj.__class__`, see
+    /// `FindPreference::include_object_members`), but not for the implicit lookups of a
+    /// constructor, `__call__` or an operator, whose callers fall back to another target when
+    /// the class does not define the member.
     pub(crate) fn find_attribute_definition_for_base_type(
         &self,
         handle: &Handle,
         preference: FindPreference,
         base_type: Type,
         name: &Name,
+        include_object: bool,
     ) -> Result<Vec1<FindDefinitionItemWithDocstring>, EmptyResponseReason> {
         let defs = self
             .ad_hoc_solve(handle, "attribute_definition", |solver| {
-                let completions = |ty| solver.completions(ty, Some(name), false, false);
+                let completions = |ty| solver.completions(ty, Some(name), false, include_object);
 
                 match base_type {
                     Type::Union(u) => u
@@ -2779,7 +2800,13 @@ impl<'a> Transaction<'a> {
         } = dunder;
         let dunder_str = dunder_name.to_string();
         let defs = self
-            .find_attribute_definition_for_base_type(handle, preference, base_type, &dunder_name)
+            .find_attribute_definition_for_base_type(
+                handle,
+                preference,
+                base_type,
+                &dunder_name,
+                false,
+            )
             .map_err(|_| EmptyResponseReason::DefinitionNotFound {
                 name: dunder_str.clone(),
                 context: DefinitionContext::Operator { dunder: dunder_str },
@@ -2870,6 +2897,7 @@ impl<'a> Transaction<'a> {
             preference,
             base_type.clone(),
             name,
+            preference.include_object_members,
         ) {
             return Ok(defs);
         }

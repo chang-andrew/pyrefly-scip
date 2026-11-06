@@ -5190,6 +5190,25 @@ object.__setattr__
 }
 
 #[test]
+fn attribute_inherited_from_object() {
+    let code = r#"
+class Base:
+    pass
+
+def f(obj: Base) -> None:
+    obj.__class__
+#        ^
+    obj.__dict__
+#        ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert!(
+        report.contains("def __class__(self)") && report.contains("__dict__: dict[str, Any]"),
+        "missing definitions of members inherited from `object`:\n{report}"
+    );
+}
+
+#[test]
 fn keyword_argument_test_inherited_typed_dict_key_and_new() {
     let code = r#"
 from typing import TypedDict
