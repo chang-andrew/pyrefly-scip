@@ -1560,3 +1560,17 @@ class Foo:
 Foo(untyped(1), "bad")  # E: Argument `Literal['bad']` is not assignable to parameter `b` with type `int`
 "#,
 );
+
+testcase!(
+    test_construct_class_with_any_base_checks_arguments,
+    r#"
+from typing import Any
+
+class C(Any):
+    pass
+
+def f(x: int) -> None:
+    C(x.missing)  # E: Object of class `int` has no attribute `missing`
+    C(arg=x.missing)  # E: Object of class `int` has no attribute `missing`
+"#,
+);
