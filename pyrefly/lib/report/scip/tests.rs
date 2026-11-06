@@ -222,7 +222,8 @@ def outer(a, b=1):
 #         ^^^^^ definition  snapshot-util 0.1 defs/outer().Local#
 #          enclosing [36, 4, 39, 26]
         field = 1
-#       ^^^^^ definition local 4
+#       ^^^^^ definition  snapshot-util 0.1 defs/outer().Local#field.
+#        enclosing [37, 8, 17]
         def method(self):
 #           ^^^^^^ definition  snapshot-util 0.1 defs/outer().Local#method().
 #            enclosing [38, 8, 39, 26]

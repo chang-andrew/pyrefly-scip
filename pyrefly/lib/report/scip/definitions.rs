@@ -17,8 +17,9 @@
 //! - a function is `<class>name().` when any class encloses it, even through other
 //!   functions, and `<owner>name().` otherwise;
 //! - a parameter is `<function>(name)` and a type parameter `<owner>[T]`;
-//! - a variable of a module or class body is `<owner>name.`, and an instance attribute
-//!   assigned through a method's `self` is `<class>name.`;
+//! - a variable of a module or class body is `<owner>name.`, even when the class is inside
+//!   a function, and an instance attribute assigned through a method's `self` is
+//!   `<class>name.`;
 //! - every other name bound inside a function, lambda or comprehension is local.
 //!
 //! The first binding of a name in its scope is the symbol's definition; later bindings of
@@ -202,14 +203,6 @@ impl Collector<'_> {
             .expect("the module scope is always present")
     }
 
-    /// Whether any scope below `scope` is a function or lambda, making `scope`'s variables
-    /// local.
-    fn inside_function(&self, scope: usize) -> bool {
-        self.scopes[..scope]
-            .iter()
-            .any(|s| matches!(s.kind, ScopeKind::Function { .. } | ScopeKind::Lambda))
-    }
-
     /// The index of the scope where binding `name` in the innermost scope takes effect. A
     /// walrus skips comprehensions, and `global` and `nonlocal` declarations redirect the
     /// binding to the module or the enclosing function.
@@ -236,11 +229,9 @@ impl Collector<'_> {
         SiteSymbol::Local(self.next_local - 1)
     }
 
-    /// The symbol a variable named `name` gets when it is first bound in `scope`.
+    /// The symbol a variable named `name` gets when it is first bound in `scope`. Variables
+    /// of a class body are global even when the class is inside a function.
     fn variable_symbol(&mut self, scope: usize, name: &str) -> SiteSymbol {
-        if self.inside_function(scope) {
-            return self.new_local();
-        }
         match &self.scopes[scope].kind {
             ScopeKind::Module => {
                 SiteSymbol::Global(format!("{}{}.", self.module_namespace, escape_name(name)))
