@@ -2468,10 +2468,16 @@ impl<'a> Transaction<'a> {
     ) -> Option<FindDefinitionItemWithDocstring> {
         completions.into_iter().find_map(|x| {
             if &x.name == name {
+                // `b` in `a.b` after `import a.b` is the submodule itself.
+                let metadata = if matches!(x.definition, AttrDefinition::Submodule { .. }) {
+                    DefinitionMetadata::Module
+                } else {
+                    DefinitionMetadata::Attribute
+                };
                 let (definition, docstring_range) =
                     self.resolve_attribute_definition(handle, &x.name, x.definition, preference)?;
                 Some(FindDefinitionItemWithDocstring {
-                    metadata: DefinitionMetadata::Attribute,
+                    metadata,
                     definition_range: definition.range,
                     module: definition.module,
                     docstring_range,

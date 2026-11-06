@@ -640,6 +640,50 @@ enumerate([], start=1)
     );
 }
 
+// `b` in `a.b` after `import a.b` refers to the submodule. scip-python instead gives the head
+// `a`, or sometimes the whole dotted name, the symbol of the first `a.*` submodule that the
+// file imports (`dotted-import-head` and `dotted-module-span` in scip-goal/ADJUDICATIONS.md).
+#[test]
+fn test_dotted_submodule_reference() {
+    assert_index(
+        &[
+            ("core.validators", "class PostalCode: ...\n"),
+            ("core", ""),
+            (
+                "main",
+                r#"
+import core.validators
+
+x = core.validators.PostalCode
+"#,
+            ),
+        ],
+        r#"
+# core/validators.py
+# < definition scip-python python snapshot-util 0.1 `core.validators`/__init__:
+class PostalCode: ...
+#     ^^^^^^^^^^ definition  snapshot-util 0.1 `core.validators`/PostalCode#
+#      enclosing [0, 0, 21]
+
+# core.py
+# < definition scip-python python snapshot-util 0.1 core/__init__:
+
+# main.py
+# < definition scip-python python snapshot-util 0.1 main/__init__:
+
+import core.validators
+#      ^^^^^^^^^^^^^^^ reference[import]  snapshot-util 0.1 `core.validators`/__init__:
+
+x = core.validators.PostalCode
+#^ definition  snapshot-util 0.1 main/x.
+# enclosing [3, 0, 30]
+#   ^^^^ reference  snapshot-util 0.1 core/__init__:
+#        ^^^^^^^^^^ reference  snapshot-util 0.1 `core.validators`/__init__:
+#                   ^^^^^^^^^^ reference  snapshot-util 0.1 `core.validators`/PostalCode#
+"#,
+    );
+}
+
 #[test]
 fn test_module_and_lambda_references() {
     assert_index(
