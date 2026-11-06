@@ -1359,6 +1359,36 @@ impl<'a> Transaction<'a> {
         None
     }
 
+    /// The `__init__` method that a class callee inherits from the nearest class in its MRO
+    /// that defines one.
+    fn inherited_init_location(
+        &self,
+        handle: &Handle,
+        callee_kind: &CalleeKind,
+    ) -> Option<TextRangeWithModule> {
+        let callee_range = match callee_kind {
+            CalleeKind::Function(name) => name.range,
+            CalleeKind::Method(base_range, name) => {
+                TextRange::new(base_range.start(), name.range.end())
+            }
+            CalleeKind::Unknown => return None,
+        };
+        let Type::ClassDef(class) = self.get_type_trace(handle, callee_range)? else {
+            return None;
+        };
+        self.ad_hoc_solve(handle, "inherited_init_location", |solver| {
+            let init = solver.get_class_member_with_defining_class(&class, &dunder::INIT)?;
+            let range = solver
+                .get_class_fields(&init.defining_class)?
+                .field_decl_range(&dunder::INIT)?;
+            Some(TextRangeWithModule::new(
+                init.defining_class.module().dupe(),
+                range,
+            ))
+        })
+        .flatten()
+    }
+
     fn refine_keyword_argument_definition_for_callee(
         &self,
         ast: &ModModule,
@@ -2920,6 +2950,24 @@ impl<'a> Transaction<'a> {
                         DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
                         param_range,
                     )
+                } else if let Some(TextRangeWithModule {
+                    module: init_module,
+                    range: init_range,
+                }) = self.inherited_init_location(handle, callee_kind)
+                    && let Some(param_range) = self.refine_param_location_for_callee(
+                        self.get_ast_or_parse_module(handle, &init_module).as_ref(),
+                        init_range,
+                        identifier,
+                    )
+                {
+                    // A class without its own `__init__` passes keyword arguments to the one
+                    // it inherits.
+                    results.push(FindDefinitionItem {
+                        metadata: DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
+                        definition_range: param_range,
+                        module: init_module,
+                    });
+                    continue;
                 } else {
                     // TODO(grievejia): Should we filter out unrefinable ranges here?
                     (

@@ -643,6 +643,7 @@ class Child(Base):
 
 Child(origin=1)
 #^^^^ reference  snapshot-util 0.1 main/Child#
+#     ^^^^^^ reference  snapshot-util 0.1 main/Base#__init__().(origin)
 "#,
     );
 }

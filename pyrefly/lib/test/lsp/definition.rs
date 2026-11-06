@@ -1832,6 +1832,35 @@ Definition Result:
 }
 
 #[test]
+fn keyword_argument_test_inherited_init() {
+    let code = r#"
+class Base:
+    def __init__(self, origin: int) -> None:
+        pass
+
+class Child(Base):
+    pass
+
+def test() -> None:
+    Child(origin=1)
+#         ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+10 |     Child(origin=1)
+               ^
+Definition Result:
+3 |     def __init__(self, origin: int) -> None:
+                           ^^^^^^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
+#[test]
 fn keyword_argument_test_multiple_methods() {
     let code = r#"
 class A:
