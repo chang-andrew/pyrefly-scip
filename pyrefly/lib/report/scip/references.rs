@@ -207,10 +207,14 @@ impl<'v> SourceOrderVisitor<'v> for References<'_, '_> {
         }
     }
 
-    /// A keyword argument refers to the parameter it passes, without an access role.
+    /// A keyword argument refers to the parameter it passes, without an access role. When
+    /// the callee has no parameter of that name, go-to-definition falls back to the callee
+    /// itself, which is not what the argument refers to.
     fn visit_keyword(&mut self, keyword: &'v Keyword) {
         if let Some(arg) = &keyword.arg {
-            let definition = self.definition_at(arg.range.start());
+            let definition = self.definition_at(arg.range.start()).filter(|definition| {
+                definition.module.code_at(definition.definition_range) == arg.as_str()
+            });
             self.push(arg.range, definition, 0);
         }
         self.visit_expr(&keyword.value);

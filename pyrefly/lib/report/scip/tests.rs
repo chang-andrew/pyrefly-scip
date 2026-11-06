@@ -497,3 +497,54 @@ VALUE = Child()
 "#,
     );
 }
+
+#[test]
+fn test_keyword_arguments() {
+    assert_index(
+        &[(
+            "kwargs",
+            r#"
+class Widget:
+    def __init__(self, size: int, **kwargs) -> None:
+        pass
+
+def make(color: str, **kwargs) -> None:
+    pass
+
+Widget(size=1, extra=2)
+make(color="red", extra=2)
+"#,
+        )],
+        r#"
+# kwargs.py
+# < definition scip-python python snapshot-util 0.1 kwargs/__init__:
+
+class Widget:
+#     ^^^^^^ definition  snapshot-util 0.1 kwargs/Widget#
+#      enclosing [1, 0, 3, 12]
+    def __init__(self, size: int, **kwargs) -> None:
+#       ^^^^^^^^ definition  snapshot-util 0.1 kwargs/Widget#__init__().
+#        enclosing [2, 4, 3, 12]
+#                ^^^^ definition  snapshot-util 0.1 kwargs/Widget#__init__().(self)
+#                      ^^^^ definition  snapshot-util 0.1 kwargs/Widget#__init__().(size)
+#                            ^^^ reference  python-stdlib 3.12 builtins/int#
+#                                   ^^^^^^ definition  snapshot-util 0.1 kwargs/Widget#__init__().(kwargs)
+        pass
+
+def make(color: str, **kwargs) -> None:
+#   ^^^^ definition  snapshot-util 0.1 kwargs/make().
+#    enclosing [5, 0, 6, 8]
+#        ^^^^^ definition  snapshot-util 0.1 kwargs/make().(color)
+#               ^^^ reference  python-stdlib 3.12 builtins/str#
+#                      ^^^^^^ definition  snapshot-util 0.1 kwargs/make().(kwargs)
+    pass
+
+Widget(size=1, extra=2)
+#^^^^^ reference  snapshot-util 0.1 kwargs/Widget#
+#      ^^^^ reference  snapshot-util 0.1 kwargs/Widget#__init__().(size)
+make(color="red", extra=2)
+#^^^ reference  snapshot-util 0.1 kwargs/make().
+#    ^^^^^ reference  snapshot-util 0.1 kwargs/make().(color)
+"#,
+    );
+}
