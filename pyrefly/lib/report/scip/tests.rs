@@ -9,6 +9,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use pretty_assertions::assert_eq;
+use pyrefly_python::sys_info::PythonVersion;
 
 use crate::report::scip::document::Indexer;
 use crate::report::scip::document::relative_path;
@@ -24,6 +25,7 @@ fn index(files: &[(&'static str, &str)], show_docs: bool) -> String {
     let indexer = Indexer::new(
         &transaction,
         Package::new("snapshot-util".to_owned(), "0.1".to_owned()),
+        PythonVersion::new(3, 12, 0),
         PathBuf::new(),
     );
     let mut out = String::new();
@@ -140,10 +142,12 @@ def generic[T](x: T) -> T:
 # < definition scip-python python snapshot-util 0.1 defs/__init__:
 
 import functools
+#      ^^^^^^^^^ reference[import]  python-stdlib 3.12 functools/__init__:
 
 LIMIT: int = 3
 #^^^^ definition  snapshot-util 0.1 defs/LIMIT.
 # enclosing [3, 0, 14]
+#      ^^^ reference  python-stdlib 3.12 builtins/int#
 counter = 0
 #^^^^^^ definition  snapshot-util 0.1 defs/counter.
 # enclosing [4, 0, 11]
@@ -165,22 +169,31 @@ class Base:
 #        enclosing [11, 4, 17, 24]
 #                ^^^^ definition  snapshot-util 0.1 defs/Base#__init__().(self)
 #                      ^^^^ definition  snapshot-util 0.1 defs/Base#__init__().(name)
+#                            ^^^ reference  python-stdlib 3.12 builtins/str#
         self.name = name
+#       ^^^^ reference  snapshot-util 0.1 defs/Base#__init__().(self)
 #            ^^^^ definition  snapshot-util 0.1 defs/Base#name.
 #             enclosing [12, 8, 24]
+#                   ^^^^ reference  snapshot-util 0.1 defs/Base#__init__().(name)
         self.kind = name
+#       ^^^^ reference  snapshot-util 0.1 defs/Base#__init__().(self)
 #            ^^^^ reference[write]  snapshot-util 0.1 defs/Base#kind.
+#                   ^^^^ reference  snapshot-util 0.1 defs/Base#__init__().(name)
         local = [n for n in name]
 #       ^^^^^ definition local 0
+#                ^ reference local 1
 #                      ^ definition local 1
+#                           ^^^^ reference  snapshot-util 0.1 defs/Base#__init__().(name)
 
         def helper(value):
 #           ^^^^^^ definition  snapshot-util 0.1 defs/Base#helper().
 #            enclosing [16, 8, 17, 24]
 #                  ^^^^^ definition  snapshot-util 0.1 defs/Base#helper().(value)
             return value
+#                  ^^^^^ reference  snapshot-util 0.1 defs/Base#helper().(value)
 
     @functools.cache
+#              ^^^^^ reference  python-stdlib 3.12 functools/cache().
     def method(self, *args, **kwargs):
 #       ^^^^^^ definition  snapshot-util 0.1 defs/Base#method().
 #        enclosing [20, 4, 21, 26]
@@ -191,11 +204,13 @@ class Base:
 #                     ^ definition local 2
 
     @staticmethod
+#    ^^^^^^^^^^^^ reference  python-stdlib 3.12 builtins/staticmethod#
     def static(x):
 #       ^^^^^^ definition  snapshot-util 0.1 defs/Base#static().
 #        enclosing [24, 4, 25, 18]
 #              ^ definition  snapshot-util 0.1 defs/Base#static().(x)
         x.attr = 1
+#       ^ reference  snapshot-util 0.1 defs/Base#static().(x)
 
     class Inner:
 #         ^^^^^ definition  snapshot-util 0.1 defs/Base#Inner#
@@ -209,8 +224,10 @@ def outer(a, b=1):
 #            ^ definition  snapshot-util 0.1 defs/outer().(b)
     total = a
 #   ^^^^^ definition local 3
+#           ^ reference  snapshot-util 0.1 defs/outer().(a)
     total = b
 #   ^^^^^ reference[write] local 3
+#           ^ reference  snapshot-util 0.1 defs/outer().(b)
     def inner():
 #       ^^^^^ definition  snapshot-util 0.1 defs/outer().inner().
 #        enclosing [33, 4, 35, 17]
@@ -229,9 +246,11 @@ def outer(a, b=1):
 #            enclosing [38, 8, 39, 26]
 #                  ^^^^ definition  snapshot-util 0.1 defs/outer().Local#method().(self)
             self.value = 1
+#           ^^^^ reference  snapshot-util 0.1 defs/outer().Local#method().(self)
 #                ^^^^^ definition  snapshot-util 0.1 defs/outer().Local#value.
 #                 enclosing [39, 12, 26]
     return inner
+#          ^^^^^ reference  snapshot-util 0.1 defs/outer().inner().
 
 def use_global():
 #   ^^^^^^^^^^ definition  snapshot-util 0.1 defs/use_global().
@@ -247,6 +266,7 @@ for item in [1]:
     try:
         pass
     except Exception as error:
+#          ^^^^^^^^^ reference  python-stdlib 3.12 builtins/Exception#
 #                       ^^^^^ definition  snapshot-util 0.1 defs/error.
 #                        enclosing [47, 4, 50, 12]
         pass
@@ -256,7 +276,10 @@ def generic[T](x: T) -> T:
 #    enclosing [52, 0, 53, 12]
 #           ^ definition  snapshot-util 0.1 defs/generic().[T]
 #              ^ definition  snapshot-util 0.1 defs/generic().(x)
+#                 ^ reference  snapshot-util 0.1 defs/generic().[T]
+#                       ^ reference  snapshot-util 0.1 defs/generic().[T]
     return x
+#          ^ reference  snapshot-util 0.1 defs/generic().(x)
 "#,
     );
 }
@@ -304,7 +327,10 @@ VALUE = Child()
 # documentation (module) docs
 
 import functools
+#      ^^^^^^^^^ reference[import]  python-stdlib 3.12 functools/__init__:
 from dataclasses import dataclass
+#    ^^^^^^^^^^^ reference[import]  python-stdlib 3.12 dataclasses/__init__:
+#                       ^^^^^^^^^ reference[import]  python-stdlib 3.12 dataclasses/dataclass().
 
 class Base:
 #     ^^^^ definition  snapshot-util 0.1 docs/Base#
@@ -325,6 +351,7 @@ class Base:
 #    documentation ```python
 #                  limit: int
 #                  ```
+#          ^^^ reference  python-stdlib 3.12 builtins/int#
 
     def __init__(self, name: str, /, *, flag=False) -> None:
 #       ^^^^^^^^ definition  snapshot-util 0.1 docs/Base#__init__().
@@ -350,9 +377,11 @@ class Base:
 #                 kind Parameter display_name self
 #                      ^^^^ definition  snapshot-util 0.1 docs/Base#__init__().(name)
 #                       kind Parameter display_name name
+#                            ^^^ reference  python-stdlib 3.12 builtins/str#
 #                                       ^^^^ definition  snapshot-util 0.1 docs/Base#__init__().(flag)
 #                                        kind Parameter display_name flag
         self.name = name
+#       ^^^^ reference  snapshot-util 0.1 docs/Base#__init__().(self)
 #            ^^^^ definition  snapshot-util 0.1 docs/Base#name.
 #             enclosing [10, 8, 24]
 #             kind Field display_name name
@@ -360,7 +389,9 @@ class Base:
 #             documentation ```python
 #                           name
 #                           ```
+#                   ^^^^ reference  snapshot-util 0.1 docs/Base#__init__().(name)
         self.size: int = 0
+#       ^^^^ reference  snapshot-util 0.1 docs/Base#__init__().(self)
 #            ^^^^ definition  snapshot-util 0.1 docs/Base#size.
 #             enclosing [11, 8, 26]
 #             kind Field display_name size
@@ -368,8 +399,10 @@ class Base:
 #             documentation ```python
 #                           size: int
 #                           ```
+#                  ^^^ reference  python-stdlib 3.12 builtins/int#
 
     @functools.cache
+#              ^^^^^ reference  python-stdlib 3.12 functools/cache().
     def method(self, a, *args, b: int = 2, **kwargs):
 #       ^^^^^^ definition  snapshot-util 0.1 docs/Base#method().
 #        enclosing [14, 4, 16, 18]
@@ -401,12 +434,16 @@ class Base:
 #                         kind Parameter display_name args
 #                              ^ definition  snapshot-util 0.1 docs/Base#method().(b)
 #                               kind Parameter display_name b
+#                                 ^^^ reference  python-stdlib 3.12 builtins/int#
 #                                            ^^^^^^ definition  snapshot-util 0.1 docs/Base#method().(kwargs)
 #                                             kind Parameter display_name kwargs
         """Method docs."""
         return [a]
+#               ^ reference  snapshot-util 0.1 docs/Base#method().(a)
 
 @dataclass(frozen=True)
+#^^^^^^^^^ reference  python-stdlib 3.12 dataclasses/dataclass().
+#          ^^^^^^ reference  python-stdlib 3.12 dataclasses/dataclass().(frozen)
 class Child(Base):
 #     ^^^^^ definition  snapshot-util 0.1 docs/Child#
 #      enclosing [19, 0, 20, 17]
@@ -417,6 +454,7 @@ class Child(Base):
 #                    @dataclass(frozen=True)
 #                    class Child(Base):
 #                    ```
+#           ^^^^ reference  snapshot-util 0.1 docs/Base#
     tag = "child"
 #   ^^^ definition  snapshot-util 0.1 docs/Child#tag.
 #    enclosing [20, 4, 17]
@@ -434,6 +472,7 @@ async def fetch() -> int:
 #          documentation ```python
 #                        async def fetch() -> int:
 #                        ```
+#                    ^^^ reference  python-stdlib 3.12 builtins/int#
     return 1
 
 async def fetch_inferred():
@@ -454,6 +493,7 @@ VALUE = Child()
 # documentation ```python
 #               VALUE: Child
 #               ```
+#       ^^^^^ reference  snapshot-util 0.1 docs/Child#
 "#,
     );
 }

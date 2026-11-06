@@ -7,6 +7,7 @@
 
 //! The SCIP document of one checked file.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -19,7 +20,9 @@ use pyrefly_python::docstring::Docstring;
 use pyrefly_python::module::Module;
 use pyrefly_python::module_name::ModuleName;
 use pyrefly_python::module_path::ModulePath;
+use pyrefly_python::module_path::ModulePathDetails;
 use pyrefly_python::short_identifier::ShortIdentifier;
+use pyrefly_python::sys_info::PythonVersion;
 use ruff_python_ast::Identifier;
 use ruff_text_size::TextRange;
 use scip::types::Document;
@@ -37,9 +40,12 @@ use crate::report::scip::definitions::Site;
 use crate::report::scip::definitions::SiteKind;
 use crate::report::scip::definitions::SiteRole;
 use crate::report::scip::definitions::SiteSymbol;
+use crate::report::scip::references::References;
 use crate::report::scip::symbols::Package;
 use crate::report::scip::symbols::module_descriptors;
 use crate::report::scip::symbols::module_namespace;
+use crate::state::lsp::DefinitionMetadata;
+use crate::state::lsp::FindDefinitionItemWithDocstring;
 use crate::state::state::Transaction;
 
 /// The path of a module relative to `root`, with `/` separators on every platform. A path
@@ -56,18 +62,27 @@ pub fn relative_path(path: &ModulePath, root: &Path) -> String {
 pub struct Indexer<'a> {
     transaction: &'a Transaction<'a>,
     project: Package,
+    stdlib: Package,
     /// The directory that document paths are relative to.
     root: PathBuf,
     definitions: DashMap<ModulePath, Arc<Definitions>>,
 }
 
+/// The symbol of an occurrence: a complete global symbol, or a local numbered within its
+/// module.
+#[derive(Debug, Clone)]
+pub enum OccurrenceSymbol {
+    Global(String),
+    Local(u32),
+}
+
 /// An occurrence before its symbol is formatted: locals are numbered per document, in the
 /// order of their first occurrence.
-struct PendingOccurrence {
-    range: TextRange,
-    symbol: SiteSymbol,
-    roles: i32,
-    enclosing_range: Vec<i32>,
+pub struct PendingOccurrence {
+    pub range: TextRange,
+    pub symbol: OccurrenceSymbol,
+    pub roles: i32,
+    pub enclosing_range: Vec<i32>,
 }
 
 fn to_scip_range(module: &Module, range: TextRange) -> Vec<i32> {
@@ -102,12 +117,81 @@ fn scip_kind(kind: SiteKind) -> Kind {
 }
 
 impl<'a> Indexer<'a> {
-    pub fn new(transaction: &'a Transaction<'a>, project: Package, root: PathBuf) -> Self {
+    /// An indexer for the `project` package whose documents are relative to `root`, with
+    /// standard library symbols in the `python-stdlib <python_version>` package.
+    pub fn new(
+        transaction: &'a Transaction<'a>,
+        project: Package,
+        python_version: PythonVersion,
+        root: PathBuf,
+    ) -> Self {
         Self {
             transaction,
             project,
+            stdlib: Package::new(
+                "python-stdlib".to_owned(),
+                format!("{}.{}", python_version.major, python_version.minor),
+            ),
             root,
             definitions: DashMap::new(),
+        }
+    }
+
+    pub fn transaction(&self) -> &'a Transaction<'a> {
+        self.transaction
+    }
+
+    /// The package of the symbols defined in `module`: the project for files under the
+    /// project root, the standard library for bundled typeshed, and otherwise a package
+    /// named after the module's top-level package.
+    fn package(&self, module: &Module) -> Cow<'_, Package> {
+        match module.path().details() {
+            ModulePathDetails::BundledTypeshed(_) => Cow::Borrowed(&self.stdlib),
+            ModulePathDetails::FileSystem(path)
+            | ModulePathDetails::Memory(path)
+            | ModulePathDetails::Namespace(path)
+                if path.is_relative() || path.starts_with(&self.root) =>
+            {
+                Cow::Borrowed(&self.project)
+            }
+            _ => Cow::Owned(Package::new(
+                module.name().first_component().to_string(),
+                String::new(),
+            )),
+        }
+    }
+
+    /// The symbol of a definition that pyrefly resolved a reference in `handle` to: the
+    /// module itself, or the binding site at the definition's range. A local symbol only
+    /// resolves within its own module.
+    pub fn resolve(
+        &self,
+        handle: &Handle,
+        definition: &FindDefinitionItemWithDocstring,
+    ) -> Option<OccurrenceSymbol> {
+        let module = &definition.module;
+        let package = self.package(module);
+        if matches!(definition.metadata, DefinitionMetadata::Module) {
+            return Some(OccurrenceSymbol::Global(
+                package.symbol(&module_descriptors(module.name())),
+            ));
+        }
+        let target = Handle::new(
+            module.name(),
+            module.path().dupe(),
+            handle.sys_info().dupe(),
+        );
+        match &self
+            .definitions(&target, module)
+            .get(definition.definition_range)?
+            .symbol
+        {
+            SiteSymbol::Global(descriptors) => {
+                Some(OccurrenceSymbol::Global(package.symbol(descriptors)))
+            }
+            SiteSymbol::Local(id) => {
+                (module.path() == handle.path()).then_some(OccurrenceSymbol::Local(*id))
+            }
         }
     }
 
@@ -232,8 +316,9 @@ impl<'a> Indexer<'a> {
             ..Default::default()
         }];
 
+        let definitions = self.definitions(handle, &module);
         let mut pending = Vec::new();
-        for (range, site) in self.definitions(handle, &module).iter() {
+        for (range, site) in definitions.iter() {
             let is_definition = site.role == SiteRole::Definition;
             let roles = match site.role {
                 SiteRole::Definition => SymbolRole::Definition as i32,
@@ -246,7 +331,12 @@ impl<'a> Indexer<'a> {
             };
             pending.push(PendingOccurrence {
                 range: *range,
-                symbol: site.symbol.clone(),
+                symbol: match &site.symbol {
+                    SiteSymbol::Global(descriptors) => {
+                        OccurrenceSymbol::Global(self.project.symbol(descriptors))
+                    }
+                    SiteSymbol::Local(id) => OccurrenceSymbol::Local(*id),
+                },
                 roles,
                 enclosing_range,
             });
@@ -283,6 +373,9 @@ impl<'a> Indexer<'a> {
             }
         }
 
+        let ast = self.transaction.get_ast_or_parse_module(handle, &module);
+        pending.extend(References::collect(self, handle, &definitions, &ast));
+
         // Number locals in the order of their first occurrence, then sort occurrences by range
         // and symbol.
         pending.sort_by_key(|occurrence| (occurrence.range.start(), occurrence.range.end()));
@@ -291,8 +384,8 @@ impl<'a> Indexer<'a> {
             .into_iter()
             .map(|occurrence| {
                 let symbol = match occurrence.symbol {
-                    SiteSymbol::Global(descriptors) => self.project.symbol(&descriptors),
-                    SiteSymbol::Local(id) => {
+                    OccurrenceSymbol::Global(symbol) => symbol,
+                    OccurrenceSymbol::Local(id) => {
                         let next = locals.len();
                         format!("local {}", locals.entry(id).or_insert(next))
                     }

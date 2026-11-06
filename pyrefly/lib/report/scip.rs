@@ -18,6 +18,7 @@
 
 mod definitions;
 mod document;
+mod references;
 #[cfg(test)]
 mod snapshot;
 mod symbols;
@@ -38,6 +39,7 @@ use lsp_types::Uri;
 use parking_lot::Mutex;
 use protobuf::Message;
 use pyrefly_build::handle::Handle;
+use pyrefly_python::sys_info::PythonVersion;
 use scip::types::Metadata;
 use scip::types::ProtocolVersion;
 use scip::types::TextEncoding;
@@ -101,7 +103,12 @@ pub fn write_scip(
         writer,
         result: Ok(()),
     });
-    let indexer = Indexer::new(transaction, project, root);
+    let python_version = handles
+        .first()
+        .map_or_else(PythonVersion::default, |(_, handle)| {
+            handle.sys_info().version()
+        });
+    let indexer = Indexer::new(transaction, project, python_version, root);
     let claimed = AtomicUsize::new(0);
     transaction.thread_pool().spawn_many(|| {
         loop {

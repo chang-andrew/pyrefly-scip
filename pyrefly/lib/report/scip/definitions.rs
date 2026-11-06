@@ -153,6 +153,11 @@ impl Definitions {
         }
     }
 
+    /// The binding site whose identifier is at `range`.
+    pub fn get(&self, range: TextRange) -> Option<&Site> {
+        self.sites.get(&range)
+    }
+
     /// Every binding site, in source order.
     pub fn iter(&self) -> impl Iterator<Item = (&TextRange, &Site)> {
         self.sites
