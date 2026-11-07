@@ -93,11 +93,14 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         dict_items.iter().for_each(|x| match &x.key {
             Some(key) => {
                 let key_type = self.expr_infer(key, item_errors);
-                if let Type::Literal(lit) = &key_type
+                // The type that the value is checked against, and the key it is reported under.
+                // A value with none, because its key is an error, is still inferred, so that
+                // errors inside it are reported and IDE features see its expressions.
+                let expected = if let Type::Literal(lit) = &key_type
                     && let Lit::Str(name) = &lit.value
                 {
                     let key_name = Name::new(name);
-                    match fields.get(&key_name) {
+                    let expected = match fields.get(&key_name) {
                         Some(field) if is_update && field.is_read_only() => {
                             self.error(
                                 check_errors,
@@ -105,39 +108,11 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                                 ErrorKind::BadTypedDictKey,
                                 format!("Cannot update read-only field `{key_name}`"),
                             );
+                            None
                         }
-                        Some(field) => {
-                            self.expr_with_options(
-                                &x.value,
-                                ExprOptions::check(
-                                    &field.ty,
-                                    item_errors,
-                                    check_errors,
-                                    &|| {
-                                        TypeCheckContext::of_kind(TypeCheckKind::TypedDictKey(
-                                            Some(key_name.clone()),
-                                            false,
-                                        ))
-                                    },
-                                    None,
-                                ),
-                            );
-                        }
+                        Some(field) => Some((&field.ty, Some(key_name.clone()))),
                         None if let ExtraItems::Extra(extra) = &extra_items => {
-                            self.expr_with_options(
-                                &x.value,
-                                ExprOptions::check(
-                                    &extra.ty,
-                                    item_errors,
-                                    check_errors,
-                                    &|| {
-                                        TypeCheckContext::of_kind(TypeCheckKind::TypedDictKey(
-                                            None, false,
-                                        ))
-                                    },
-                                    None,
-                                ),
-                            );
+                            Some((&extra.ty, None))
                         }
                         None => {
                             let mut builder = check_errors.error_builder(
@@ -159,9 +134,11 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                                     builder.with_detail(format!("Did you mean `{suggestion}`?"));
                             }
                             builder.emit();
+                            None
                         }
-                    }
+                    };
                     keys.insert(key_name);
+                    expected
                 } else {
                     self.error(
                         check_errors,
@@ -172,6 +149,29 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                             self.for_display(key_type)
                         ),
                     );
+                    None
+                };
+                match expected {
+                    Some((ty, key_name)) => {
+                        self.expr_with_options(
+                            &x.value,
+                            ExprOptions::check(
+                                ty,
+                                item_errors,
+                                check_errors,
+                                &|| {
+                                    TypeCheckContext::of_kind(TypeCheckKind::TypedDictKey(
+                                        key_name.clone(),
+                                        false,
+                                    ))
+                                },
+                                None,
+                            ),
+                        );
+                    }
+                    None => {
+                        self.expr_infer(&x.value, item_errors);
+                    }
                 }
             }
             None => {

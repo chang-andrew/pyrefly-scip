@@ -5304,6 +5304,38 @@ Definition Result:
     );
 }
 
+/// The value under a key that a TypedDict does not declare is still inferred, so its attributes
+/// have definitions.
+#[test]
+fn definition_in_value_of_undeclared_typed_dict_key() {
+    let code = r#"
+from enum import Enum
+from typing import TypedDict
+
+class Method(Enum):
+    EMAIL = "Email"
+
+class Event(TypedDict):
+    kind: str
+
+event: Event = {"kind": "a", "method": Method.EMAIL}
+#                                             ^
+"#;
+    let report = get_batched_lsp_operations_report_allow_error(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+11 | event: Event = {"kind": "a", "method": Method.EMAIL}
+                                                   ^
+Definition Result:
+6 |     EMAIL = "Email"
+        ^^^^^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
 /// A keyword argument binds a parameter of the callee's type when the callee is a variable
 /// holding a class or a function, a union of functions (the first one with the parameter), an
 /// overloaded function whose first `def` lacks the parameter, or `TypeVar` in a declaration.
