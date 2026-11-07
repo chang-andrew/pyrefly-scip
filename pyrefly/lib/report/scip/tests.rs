@@ -1410,3 +1410,1062 @@ def x():
 "#,
     );
 }
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/aliased_import/.
+// Matches scip-python's output, except that scip-python gives the alias `A` of
+// `import aliased as A` a local symbol, and pyrefly the module `aliased/__init__:` it names.
+#[test]
+fn test_ported_aliased_import() {
+    assert_index(
+        &[
+            (
+                "actual",
+                r#"import aliased
+import aliased as A
+
+print(A.SOME_CONSTANT)
+"#,
+            ),
+            (
+                "aliased",
+                r#"SOME_CONSTANT = "Some Constant"
+"#,
+            ),
+        ],
+        r#"
+# actual.py
+# < definition scip-python python snapshot-util 0.1 actual/__init__:
+import aliased
+#      ^^^^^^^ reference[import]  snapshot-util 0.1 aliased/__init__:
+import aliased as A
+#      ^^^^^^^ reference[import]  snapshot-util 0.1 aliased/__init__:
+#                 ^ reference[import]  snapshot-util 0.1 aliased/__init__:
+
+print(A.SOME_CONSTANT)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^ reference  snapshot-util 0.1 aliased/__init__:
+#       ^^^^^^^^^^^^^ reference  snapshot-util 0.1 aliased/SOME_CONSTANT.
+
+# aliased.py
+# < definition scip-python python snapshot-util 0.1 aliased/__init__:
+SOME_CONSTANT = "Some Constant"
+#^^^^^^^^^^^^ definition  snapshot-util 0.1 aliased/SOME_CONSTANT.
+# enclosing [0, 0, 31]
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/builtin_imports/.
+// Matches scip-python's output.
+#[test]
+fn test_ported_builtin_imports() {
+    assert_index(
+        &[(
+            "builtin_imports",
+            r#"# format-options: showDocs
+
+import re
+from typing import Callable, Optional
+
+print(re, Callable, Optional)
+"#,
+        )],
+        r#"
+# builtin_imports.py
+# < definition scip-python python snapshot-util 0.1 builtin_imports/__init__:
+# format-options: showDocs
+
+import re
+#      ^^ reference[import]  python-stdlib 3.12 re/__init__:
+from typing import Callable, Optional
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^^^^^^ reference[import]  python-stdlib 3.12 typing/Callable.
+#                            ^^^^^^^^ reference[import]  python-stdlib 3.12 typing/Optional.
+
+print(re, Callable, Optional)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^ reference  python-stdlib 3.12 re/__init__:
+#         ^^^^^^^^ reference  python-stdlib 3.12 typing/Callable.
+#                   ^^^^^^^^ reference  python-stdlib 3.12 typing/Optional.
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/class_nohint/.
+// Matches scip-python's output.
+#[test]
+fn test_ported_class_nohint() {
+    assert_index(
+        &[(
+            "class_nohint",
+            r#"# format-options: showDocs
+
+class Example:
+    # Note, only y has a type hint
+    y: int
+
+    def __init__(self, in_val):
+        self.x = in_val
+        self.x = self.x + 1
+        self.y = in_val
+
+    def something(self):
+        print(self.x)
+        print(self.y)
+"#,
+        )],
+        r#"
+# class_nohint.py
+# < definition scip-python python snapshot-util 0.1 class_nohint/__init__:
+# format-options: showDocs
+
+class Example:
+#     ^^^^^^^ definition  snapshot-util 0.1 class_nohint/Example#
+#      enclosing [2, 0, 13, 21]
+    # Note, only y has a type hint
+    y: int
+#   ^ definition  snapshot-util 0.1 class_nohint/Example#y.
+#    enclosing [4, 4, 10]
+#      ^^^ reference  python-stdlib 3.12 builtins/int#
+
+    def __init__(self, in_val):
+#       ^^^^^^^^ definition  snapshot-util 0.1 class_nohint/Example#__init__().
+#        enclosing [6, 4, 9, 23]
+#                ^^^^ definition  snapshot-util 0.1 class_nohint/Example#__init__().(self)
+#                      ^^^^^^ definition  snapshot-util 0.1 class_nohint/Example#__init__().(in_val)
+        self.x = in_val
+#       ^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(self)
+#            ^ definition  snapshot-util 0.1 class_nohint/Example#x.
+#             enclosing [7, 8, 23]
+#                ^^^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(in_val)
+        self.x = self.x + 1
+#       ^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(self)
+#            ^ reference[write]  snapshot-util 0.1 class_nohint/Example#x.
+#                ^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(self)
+#                     ^ reference  snapshot-util 0.1 class_nohint/Example#x.
+        self.y = in_val
+#       ^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(self)
+#            ^ reference[write]  snapshot-util 0.1 class_nohint/Example#y.
+#                ^^^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(in_val)
+
+    def something(self):
+#       ^^^^^^^^^ definition  snapshot-util 0.1 class_nohint/Example#something().
+#        enclosing [11, 4, 13, 21]
+#                 ^^^^ definition  snapshot-util 0.1 class_nohint/Example#something().(self)
+        print(self.x)
+#       ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#             ^^^^ reference  snapshot-util 0.1 class_nohint/Example#something().(self)
+#                  ^ reference  snapshot-util 0.1 class_nohint/Example#x.
+        print(self.y)
+#       ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#             ^^^^ reference  snapshot-util 0.1 class_nohint/Example#something().(self)
+#                  ^ reference  snapshot-util 0.1 class_nohint/Example#y.
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/comprehensions/.
+// Matches scip-python's output.
+#[test]
+fn test_ported_comprehensions() {
+    assert_index(
+        &[(
+            "comp",
+            r#"def something(x):
+    return 2 * x
+
+_ = [x for x in "should be local 0"]
+_ = [something(x) for x in "should be local 1"]
+_ = [something(x) for x in "should be local 2" if x == "s"]
+_ = {k: x for (k, x) in enumerate(range(10))}
+
+
+asdf = (var for var in [1, 2, 3] if var % 2 == 0)
+for var in asdf:
+    print(var)
+
+# TODO: ListComprehensions with if
+# TODO: Dictionary comprehensions
+
+"#,
+        )],
+        r#"
+# comp.py
+# < definition scip-python python snapshot-util 0.1 comp/__init__:
+def something(x):
+#   ^^^^^^^^^ definition  snapshot-util 0.1 comp/something().
+#    enclosing [0, 0, 1, 16]
+#             ^ definition  snapshot-util 0.1 comp/something().(x)
+    return 2 * x
+#              ^ reference  snapshot-util 0.1 comp/something().(x)
+
+_ = [x for x in "should be local 0"]
+#    ^ reference local 0
+#          ^ definition local 0
+_ = [something(x) for x in "should be local 1"]
+#    ^^^^^^^^^ reference  snapshot-util 0.1 comp/something().
+#              ^ reference local 1
+#                     ^ definition local 1
+_ = [something(x) for x in "should be local 2" if x == "s"]
+#    ^^^^^^^^^ reference  snapshot-util 0.1 comp/something().
+#              ^ reference local 2
+#                     ^ definition local 2
+#                                                 ^ reference local 2
+_ = {k: x for (k, x) in enumerate(range(10))}
+#    ^ reference local 3
+#       ^ reference local 4
+#              ^ definition local 3
+#                 ^ definition local 4
+#                       ^^^^^^^^^ reference  python-stdlib 3.12 builtins/enumerate#
+#                                 ^^^^^ reference  python-stdlib 3.12 builtins/range#
+
+
+asdf = (var for var in [1, 2, 3] if var % 2 == 0)
+#^^^ definition  snapshot-util 0.1 comp/asdf.
+# enclosing [9, 0, 49]
+#       ^^^ reference local 5
+#               ^^^ definition local 5
+#                                   ^^^ reference local 5
+for var in asdf:
+#   ^^^ definition  snapshot-util 0.1 comp/var.
+#    enclosing [10, 0, 11, 14]
+#          ^^^^ reference  snapshot-util 0.1 comp/asdf.
+    print(var)
+#   ^^^^^ reference  python-stdlib 3.12 builtins/print().
+#         ^^^ reference  snapshot-util 0.1 comp/var.
+
+# TODO: ListComprehensions with if
+# TODO: Dictionary comprehensions
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/dunder_vars/.
+// Matches scip-python's output, except `__name__`, which scip-python names with the invented
+// `builtins/__name__#` and pyrefly leaves without an occurrence: an implicit module attribute
+// has no definition site (`module-namespace` and `builtin-named-attribute` in
+// scip-goal/ADJUDICATIONS.md).
+#[test]
+fn test_ported_dunder_vars() {
+    assert_index(
+        &[(
+            "__main__",
+            r#"
+if __name__ == '__main__':
+    print("main")
+
+"#,
+        )],
+        r#"
+# __main__.py
+# < definition scip-python python snapshot-util 0.1 __main__/__init__:
+
+if __name__ == '__main__':
+    print("main")
+#   ^^^^^ reference  python-stdlib 3.12 builtins/print().
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/enclosing_range_class/.
+// The occurrences and enclosing ranges match scip-python's, which its snapshots draw as start
+// and end markers.
+#[test]
+fn test_ported_enclosing_range_class() {
+    assert_index(
+        &[
+            (
+                "advanced",
+                r#"# format-options: showRanges
+def class_decorator(cls):
+    def wrapper(*args, **kwargs):
+        return cls(*args, **kwargs)
+    return wrapper
+
+@class_decorator
+class Test:
+    def __init__(self, x: float):
+        self.x = x
+
+    def test(self) -> float:
+        return self.x
+"#,
+            ),
+            (
+                "simple",
+                r#"# format-options: showRanges
+class Test():
+  pass
+"#,
+            ),
+        ],
+        r#"
+# advanced.py
+# < definition scip-python python snapshot-util 0.1 advanced/__init__:
+# format-options: showRanges
+def class_decorator(cls):
+#   ^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 advanced/class_decorator().
+#    enclosing [1, 0, 4, 18]
+#                   ^^^ definition  snapshot-util 0.1 advanced/class_decorator().(cls)
+    def wrapper(*args, **kwargs):
+#       ^^^^^^^ definition  snapshot-util 0.1 advanced/class_decorator().wrapper().
+#        enclosing [2, 4, 3, 35]
+#                ^^^^ definition  snapshot-util 0.1 advanced/class_decorator().wrapper().(args)
+#                        ^^^^^^ definition  snapshot-util 0.1 advanced/class_decorator().wrapper().(kwargs)
+        return cls(*args, **kwargs)
+#              ^^^ reference  snapshot-util 0.1 advanced/class_decorator().(cls)
+#                   ^^^^ reference  snapshot-util 0.1 advanced/class_decorator().wrapper().(args)
+#                           ^^^^^^ reference  snapshot-util 0.1 advanced/class_decorator().wrapper().(kwargs)
+    return wrapper
+#          ^^^^^^^ reference  snapshot-util 0.1 advanced/class_decorator().wrapper().
+
+@class_decorator
+#^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 advanced/class_decorator().
+class Test:
+#     ^^^^ definition  snapshot-util 0.1 advanced/Test#
+#      enclosing [7, 0, 12, 21]
+    def __init__(self, x: float):
+#       ^^^^^^^^ definition  snapshot-util 0.1 advanced/Test#__init__().
+#        enclosing [8, 4, 9, 18]
+#                ^^^^ definition  snapshot-util 0.1 advanced/Test#__init__().(self)
+#                      ^ definition  snapshot-util 0.1 advanced/Test#__init__().(x)
+#                         ^^^^^ reference  python-stdlib 3.12 builtins/float#
+        self.x = x
+#       ^^^^ reference  snapshot-util 0.1 advanced/Test#__init__().(self)
+#            ^ definition  snapshot-util 0.1 advanced/Test#x.
+#             enclosing [9, 8, 18]
+#                ^ reference  snapshot-util 0.1 advanced/Test#__init__().(x)
+
+    def test(self) -> float:
+#       ^^^^ definition  snapshot-util 0.1 advanced/Test#test().
+#        enclosing [11, 4, 12, 21]
+#            ^^^^ definition  snapshot-util 0.1 advanced/Test#test().(self)
+#                     ^^^^^ reference  python-stdlib 3.12 builtins/float#
+        return self.x
+#              ^^^^ reference  snapshot-util 0.1 advanced/Test#test().(self)
+#                   ^ reference  snapshot-util 0.1 advanced/Test#x.
+
+# simple.py
+# < definition scip-python python snapshot-util 0.1 simple/__init__:
+# format-options: showRanges
+class Test():
+#     ^^^^ definition  snapshot-util 0.1 simple/Test#
+#      enclosing [1, 0, 2, 6]
+  pass
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/enclosing_range_function/.
+// The occurrences and enclosing ranges match scip-python's, which its snapshots draw as start
+// and end markers.
+#[test]
+fn test_ported_enclosing_range_function() {
+    assert_index(
+        &[
+            (
+                "advanced",
+                r#"# format-options: showRanges
+def decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@decorator
+def func(x: float) -> float:
+    test = x
+
+    return test
+"#,
+            ),
+            (
+                "simple",
+                r#"# format-options: showRanges
+def simple(x):
+  return x
+"#,
+            ),
+        ],
+        r#"
+# advanced.py
+# < definition scip-python python snapshot-util 0.1 advanced/__init__:
+# format-options: showRanges
+def decorator(func):
+#   ^^^^^^^^^ definition  snapshot-util 0.1 advanced/decorator().
+#    enclosing [1, 0, 4, 18]
+#             ^^^^ definition  snapshot-util 0.1 advanced/decorator().(func)
+    def wrapper(*args, **kwargs):
+#       ^^^^^^^ definition  snapshot-util 0.1 advanced/decorator().wrapper().
+#        enclosing [2, 4, 3, 36]
+#                ^^^^ definition  snapshot-util 0.1 advanced/decorator().wrapper().(args)
+#                        ^^^^^^ definition  snapshot-util 0.1 advanced/decorator().wrapper().(kwargs)
+        return func(*args, **kwargs)
+#              ^^^^ reference  snapshot-util 0.1 advanced/decorator().(func)
+#                    ^^^^ reference  snapshot-util 0.1 advanced/decorator().wrapper().(args)
+#                            ^^^^^^ reference  snapshot-util 0.1 advanced/decorator().wrapper().(kwargs)
+    return wrapper
+#          ^^^^^^^ reference  snapshot-util 0.1 advanced/decorator().wrapper().
+
+@decorator
+#^^^^^^^^^ reference  snapshot-util 0.1 advanced/decorator().
+def func(x: float) -> float:
+#   ^^^^ definition  snapshot-util 0.1 advanced/func().
+#    enclosing [7, 0, 10, 15]
+#        ^ definition  snapshot-util 0.1 advanced/func().(x)
+#           ^^^^^ reference  python-stdlib 3.12 builtins/float#
+#                     ^^^^^ reference  python-stdlib 3.12 builtins/float#
+    test = x
+#   ^^^^ definition local 0
+#          ^ reference  snapshot-util 0.1 advanced/func().(x)
+
+    return test
+#          ^^^^ reference local 0
+
+# simple.py
+# < definition scip-python python snapshot-util 0.1 simple/__init__:
+# format-options: showRanges
+def simple(x):
+#   ^^^^^^ definition  snapshot-util 0.1 simple/simple().
+#    enclosing [1, 0, 2, 10]
+#          ^ definition  snapshot-util 0.1 simple/simple().(x)
+  return x
+#        ^ reference  snapshot-util 0.1 simple/simple().(x)
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/f_string/.
+// Matches scip-python's output.
+#[test]
+fn test_ported_f_string() {
+    assert_index(
+        &[(
+            "fstring",
+            r#"var = ", world!"
+
+print(f"var: hello {var}")
+"#,
+        )],
+        r#"
+# fstring.py
+# < definition scip-python python snapshot-util 0.1 fstring/__init__:
+var = ", world!"
+#^^ definition  snapshot-util 0.1 fstring/var.
+# enclosing [0, 0, 16]
+
+print(f"var: hello {var}")
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#                   ^^^ reference  snapshot-util 0.1 fstring/var.
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/file_from_module_import/.
+// Matches scip-python's output. scip-python's renderer draws the one-character definition
+// `X` at the start of a line without a caret.
+#[test]
+fn test_ported_file_from_module_import() {
+    assert_index(
+        &[
+            (
+                "abc.file",
+                r#"from xyz import nested_file
+
+print(nested_file.X)
+"#,
+            ),
+            (
+                "file_from_module",
+                r#"from xyz import nested_file
+
+print(nested_file.X)
+"#,
+            ),
+            ("xyz", r#""#),
+            (
+                "xyz.nested_file",
+                r#"X = "a constant"
+"#,
+            ),
+        ],
+        r#"
+# abc/file.py
+# < definition scip-python python snapshot-util 0.1 `abc.file`/__init__:
+from xyz import nested_file
+#    ^^^ reference[import]  snapshot-util 0.1 xyz/__init__:
+#               ^^^^^^^^^^^ reference[import]  snapshot-util 0.1 `xyz.nested_file`/__init__:
+
+print(nested_file.X)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^^^^^^^^^ reference  snapshot-util 0.1 `xyz.nested_file`/__init__:
+#                 ^ reference  snapshot-util 0.1 `xyz.nested_file`/X.
+
+# file_from_module.py
+# < definition scip-python python snapshot-util 0.1 file_from_module/__init__:
+from xyz import nested_file
+#    ^^^ reference[import]  snapshot-util 0.1 xyz/__init__:
+#               ^^^^^^^^^^^ reference[import]  snapshot-util 0.1 `xyz.nested_file`/__init__:
+
+print(nested_file.X)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^^^^^^^^^ reference  snapshot-util 0.1 `xyz.nested_file`/__init__:
+#                 ^ reference  snapshot-util 0.1 `xyz.nested_file`/X.
+
+# xyz.py
+# < definition scip-python python snapshot-util 0.1 xyz/__init__:
+
+# xyz/nested_file.py
+# < definition scip-python python snapshot-util 0.1 `xyz.nested_file`/__init__:
+X = "a constant"
+#^ definition  snapshot-util 0.1 `xyz.nested_file`/X.
+# enclosing [0, 0, 16]
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/graph_1278/.
+// Matches scip-python's output, except the relationship to `typing.Generic`, which the report
+// leaves out (`relationship-special-form` in scip-goal/ADJUDICATIONS.md).
+#[test]
+fn test_ported_graph_1278() {
+    assert_index(
+        &[(
+            "mwe",
+            r#"from typing import TypeVar, Generic, Callable, Iterator, ParamSpec
+
+_T_co = TypeVar("_T_co")
+_P = ParamSpec("_P")
+
+class X(Generic[_T_co]):
+    pass
+
+def decorate(func: Callable[_P, Iterator[_T_co]]) -> Callable[_P, X[_T_co]]: ...
+
+class Foo:
+    @decorate
+    def foo(self) -> Iterator[None]: ...
+
+@decorate
+def noop():
+    yield
+
+class FooImpl(Foo):
+    def foo(self):
+        return noop()"#,
+        )],
+        r#"
+# mwe.py
+# < definition scip-python python snapshot-util 0.1 mwe/__init__:
+from typing import TypeVar, Generic, Callable, Iterator, ParamSpec
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^^^^^ reference[import]  python-stdlib 3.12 typing/TypeVar#
+#                           ^^^^^^^ reference[import]  python-stdlib 3.12 typing/Generic.
+#                                    ^^^^^^^^ reference[import]  python-stdlib 3.12 typing/Callable.
+#                                              ^^^^^^^^ reference[import]  python-stdlib 3.12 typing/Iterator#
+#                                                        ^^^^^^^^^ reference[import]  python-stdlib 3.12 typing/ParamSpec#
+
+_T_co = TypeVar("_T_co")
+#^^^^ definition  snapshot-util 0.1 mwe/_T_co.
+# enclosing [2, 0, 24]
+#       ^^^^^^^ reference  python-stdlib 3.12 typing/TypeVar#
+_P = ParamSpec("_P")
+#^ definition  snapshot-util 0.1 mwe/_P.
+# enclosing [3, 0, 20]
+#    ^^^^^^^^^ reference  python-stdlib 3.12 typing/ParamSpec#
+
+class X(Generic[_T_co]):
+#     ^ definition  snapshot-util 0.1 mwe/X#
+#      enclosing [5, 0, 6, 8]
+#       ^^^^^^^ reference  python-stdlib 3.12 typing/Generic.
+#               ^^^^^ reference  snapshot-util 0.1 mwe/_T_co.
+    pass
+
+def decorate(func: Callable[_P, Iterator[_T_co]]) -> Callable[_P, X[_T_co]]: ...
+#   ^^^^^^^^ definition  snapshot-util 0.1 mwe/decorate().
+#    enclosing [8, 0, 80]
+#            ^^^^ definition  snapshot-util 0.1 mwe/decorate().(func)
+#                  ^^^^^^^^ reference  python-stdlib 3.12 typing/Callable.
+#                           ^^ reference  snapshot-util 0.1 mwe/_P.
+#                               ^^^^^^^^ reference  python-stdlib 3.12 typing/Iterator#
+#                                        ^^^^^ reference  snapshot-util 0.1 mwe/_T_co.
+#                                                    ^^^^^^^^ reference  python-stdlib 3.12 typing/Callable.
+#                                                             ^^ reference  snapshot-util 0.1 mwe/_P.
+#                                                                 ^ reference  snapshot-util 0.1 mwe/X#
+#                                                                   ^^^^^ reference  snapshot-util 0.1 mwe/_T_co.
+
+class Foo:
+#     ^^^ definition  snapshot-util 0.1 mwe/Foo#
+#      enclosing [10, 0, 12, 40]
+    @decorate
+#    ^^^^^^^^ reference  snapshot-util 0.1 mwe/decorate().
+    def foo(self) -> Iterator[None]: ...
+#       ^^^ definition  snapshot-util 0.1 mwe/Foo#foo().
+#        enclosing [12, 4, 40]
+#           ^^^^ definition  snapshot-util 0.1 mwe/Foo#foo().(self)
+#                    ^^^^^^^^ reference  python-stdlib 3.12 typing/Iterator#
+
+@decorate
+#^^^^^^^^ reference  snapshot-util 0.1 mwe/decorate().
+def noop():
+#   ^^^^ definition  snapshot-util 0.1 mwe/noop().
+#    enclosing [15, 0, 16, 9]
+    yield
+
+class FooImpl(Foo):
+#     ^^^^^^^ definition  snapshot-util 0.1 mwe/FooImpl#
+#      enclosing [18, 0, 20, 21]
+#      relationship implementation  snapshot-util 0.1 mwe/Foo#
+#             ^^^ reference  snapshot-util 0.1 mwe/Foo#
+    def foo(self):
+#       ^^^ definition  snapshot-util 0.1 mwe/FooImpl#foo().
+#        enclosing [19, 4, 20, 21]
+#        relationship implementation  snapshot-util 0.1 mwe/Foo#foo().
+#           ^^^^ definition  snapshot-util 0.1 mwe/FooImpl#foo().(self)
+        return noop()
+#              ^^^^ reference  snapshot-util 0.1 mwe/noop().
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/nameparts_import/.
+// Differs from scip-python's output: scip-python gives `importlib.resources` in an expression
+// one occurrence across the dotted name (`dotted-module-span`) and `read_text` a local symbol;
+// pyrefly emits one occurrence per segment and resolves `read_text`.
+#[test]
+fn test_ported_nameparts_import() {
+    assert_index(
+        &[(
+            "nameparts",
+            r#"import importlib.resources
+
+importlib.resources.read_text('pre_commit.resources', 'filename')
+importlib.resources.read_text('pre_commit.resources', 'filename')
+"#,
+        )],
+        r#"
+# nameparts.py
+# < definition scip-python python snapshot-util 0.1 nameparts/__init__:
+import importlib.resources
+#      ^^^^^^^^^^^^^^^^^^^ reference[import]  python-stdlib 3.12 `importlib.resources`/__init__:
+
+importlib.resources.read_text('pre_commit.resources', 'filename')
+#^^^^^^^^ reference  python-stdlib 3.12 importlib/__init__:
+#         ^^^^^^^^^ reference  python-stdlib 3.12 `importlib.resources`/__init__:
+#                   ^^^^^^^^^ reference  python-stdlib 3.12 `importlib.resources._functional`/read_text().
+importlib.resources.read_text('pre_commit.resources', 'filename')
+#^^^^^^^^ reference  python-stdlib 3.12 importlib/__init__:
+#         ^^^^^^^^^ reference  python-stdlib 3.12 `importlib.resources`/__init__:
+#                   ^^^^^^^^^ reference  python-stdlib 3.12 `importlib.resources._functional`/read_text().
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/nested_items/.
+// scip-python's project puts `src/` on the search path, so the modules here are named
+// relative to it. scip-python names each definition by its path from the project root
+// (`src.foo.bar`) but the module references in imports by their import name (`foo.bar`);
+// pyrefly names both `foo.bar`. In `long_importer`, scip-python spans `foo.bar.baz.mod` with
+// one occurrence (`dotted-module-span`).
+#[test]
+fn test_ported_nested_items() {
+    assert_index(
+        &[
+            ("foo", r#""#),
+            (
+                "foo.bar",
+                r#"class InitClass:
+    init_item = 10
+"#,
+            ),
+            (
+                "foo.bar.baz.mod",
+                r#"class SuchNestedMuchWow:
+    class_item: int = 42
+
+class AnotherNestedMuchWow:
+    other_item: int = 42
+"#,
+            ),
+            (
+                "importer",
+                r#"from foo.bar import InitClass
+from foo.bar.baz.mod import SuchNestedMuchWow, AnotherNestedMuchWow
+
+print(SuchNestedMuchWow().class_item)
+print(AnotherNestedMuchWow().other_item)
+print(InitClass().init_item)
+"#,
+            ),
+            (
+                "long_importer",
+                r#"import foo.bar.baz.mod
+
+print(foo.bar.baz.mod.SuchNestedMuchWow)
+"#,
+            ),
+        ],
+        r#"
+# foo.py
+# < definition scip-python python snapshot-util 0.1 foo/__init__:
+
+# foo/bar.py
+# < definition scip-python python snapshot-util 0.1 `foo.bar`/__init__:
+class InitClass:
+#     ^^^^^^^^^ definition  snapshot-util 0.1 `foo.bar`/InitClass#
+#      enclosing [0, 0, 1, 18]
+    init_item = 10
+#   ^^^^^^^^^ definition  snapshot-util 0.1 `foo.bar`/InitClass#init_item.
+#    enclosing [1, 4, 18]
+
+# foo/bar/baz/mod.py
+# < definition scip-python python snapshot-util 0.1 `foo.bar.baz.mod`/__init__:
+class SuchNestedMuchWow:
+#     ^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `foo.bar.baz.mod`/SuchNestedMuchWow#
+#      enclosing [0, 0, 1, 24]
+    class_item: int = 42
+#   ^^^^^^^^^^ definition  snapshot-util 0.1 `foo.bar.baz.mod`/SuchNestedMuchWow#class_item.
+#    enclosing [1, 4, 24]
+#               ^^^ reference  python-stdlib 3.12 builtins/int#
+
+class AnotherNestedMuchWow:
+#     ^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `foo.bar.baz.mod`/AnotherNestedMuchWow#
+#      enclosing [3, 0, 4, 24]
+    other_item: int = 42
+#   ^^^^^^^^^^ definition  snapshot-util 0.1 `foo.bar.baz.mod`/AnotherNestedMuchWow#other_item.
+#    enclosing [4, 4, 24]
+#               ^^^ reference  python-stdlib 3.12 builtins/int#
+
+# importer.py
+# < definition scip-python python snapshot-util 0.1 importer/__init__:
+from foo.bar import InitClass
+#    ^^^^^^^ reference[import]  snapshot-util 0.1 `foo.bar`/__init__:
+#                   ^^^^^^^^^ reference[import]  snapshot-util 0.1 `foo.bar`/InitClass#
+from foo.bar.baz.mod import SuchNestedMuchWow, AnotherNestedMuchWow
+#    ^^^^^^^^^^^^^^^ reference[import]  snapshot-util 0.1 `foo.bar.baz.mod`/__init__:
+#                           ^^^^^^^^^^^^^^^^^ reference[import]  snapshot-util 0.1 `foo.bar.baz.mod`/SuchNestedMuchWow#
+#                                              ^^^^^^^^^^^^^^^^^^^^ reference[import]  snapshot-util 0.1 `foo.bar.baz.mod`/AnotherNestedMuchWow#
+
+print(SuchNestedMuchWow().class_item)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 `foo.bar.baz.mod`/SuchNestedMuchWow#
+#                         ^^^^^^^^^^ reference  snapshot-util 0.1 `foo.bar.baz.mod`/SuchNestedMuchWow#class_item.
+print(AnotherNestedMuchWow().other_item)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^^^^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 `foo.bar.baz.mod`/AnotherNestedMuchWow#
+#                            ^^^^^^^^^^ reference  snapshot-util 0.1 `foo.bar.baz.mod`/AnotherNestedMuchWow#other_item.
+print(InitClass().init_item)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^^^^^^^ reference  snapshot-util 0.1 `foo.bar`/InitClass#
+#                 ^^^^^^^^^ reference  snapshot-util 0.1 `foo.bar`/InitClass#init_item.
+
+# long_importer.py
+# < definition scip-python python snapshot-util 0.1 long_importer/__init__:
+import foo.bar.baz.mod
+#      ^^^^^^^^^^^^^^^ reference[import]  snapshot-util 0.1 `foo.bar.baz.mod`/__init__:
+
+print(foo.bar.baz.mod.SuchNestedMuchWow)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^ reference  snapshot-util 0.1 foo/__init__:
+#         ^^^ reference  snapshot-util 0.1 `foo.bar`/__init__:
+#                 ^^^ reference  snapshot-util 0.1 `foo.bar.baz.mod`/__init__:
+#                     ^^^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 `foo.bar.baz.mod`/SuchNestedMuchWow#
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/relative_import/.
+// Matches scip-python's output.
+#[test]
+fn test_ported_relative_import() {
+    assert_index(
+        &[
+            (
+                "bar",
+                r#"from .foo import exported_function
+from .foo import this_class
+
+if True:
+    exported_function()
+
+    this_class.exported_function()
+"#,
+            ),
+            (
+                "foo",
+                r#"def exported_function():
+    return "function"
+
+class MyClass:
+    """This is a class and it is cool"""
+
+    def __init__(self):
+        pass
+
+    def exported_function(self):
+        return "exported"
+
+this_class = MyClass()
+"#,
+            ),
+        ],
+        r#"
+# bar.py
+# < definition scip-python python snapshot-util 0.1 bar/__init__:
+from .foo import exported_function
+#    ^^^^ reference[import]  snapshot-util 0.1 foo/__init__:
+#                ^^^^^^^^^^^^^^^^^ reference[import]  snapshot-util 0.1 foo/exported_function().
+from .foo import this_class
+#    ^^^^ reference[import]  snapshot-util 0.1 foo/__init__:
+#                ^^^^^^^^^^ reference[import]  snapshot-util 0.1 foo/this_class.
+
+if True:
+    exported_function()
+#   ^^^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 foo/exported_function().
+
+    this_class.exported_function()
+#   ^^^^^^^^^^ reference  snapshot-util 0.1 foo/this_class.
+#              ^^^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 foo/MyClass#exported_function().
+
+# foo.py
+# < definition scip-python python snapshot-util 0.1 foo/__init__:
+def exported_function():
+#   ^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 foo/exported_function().
+#    enclosing [0, 0, 1, 21]
+    return "function"
+
+class MyClass:
+#     ^^^^^^^ definition  snapshot-util 0.1 foo/MyClass#
+#      enclosing [3, 0, 10, 25]
+    """This is a class and it is cool"""
+
+    def __init__(self):
+#       ^^^^^^^^ definition  snapshot-util 0.1 foo/MyClass#__init__().
+#        enclosing [6, 4, 7, 12]
+#                ^^^^ definition  snapshot-util 0.1 foo/MyClass#__init__().(self)
+        pass
+
+    def exported_function(self):
+#       ^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 foo/MyClass#exported_function().
+#        enclosing [9, 4, 10, 25]
+#                         ^^^^ definition  snapshot-util 0.1 foo/MyClass#exported_function().(self)
+        return "exported"
+
+this_class = MyClass()
+#^^^^^^^^^ definition  snapshot-util 0.1 foo/this_class.
+# enclosing [12, 0, 22]
+#            ^^^^^^^ reference  snapshot-util 0.1 foo/MyClass#
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/request_goofiness/.
+// Matches scip-python's output, except the version of the external package `requests`:
+// scip-python reads `2.0.0` from its environment file, and pyrefly, which resolves `requests`
+// to its bundled stubs without an installed version, writes the placeholder `.`.
+#[test]
+fn test_ported_request_goofiness() {
+    assert_index(
+        &[(
+            "goofy",
+            r#"import requests
+
+print(requests.get("https://sourcegraph.com"))
+"#,
+        )],
+        r#"
+# goofy.py
+# < definition scip-python python snapshot-util 0.1 goofy/__init__:
+import requests
+#      ^^^^^^^^ reference[import]  requests . requests/__init__:
+
+print(requests.get("https://sourcegraph.com"))
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+#     ^^^^^^^^ reference  requests . requests/__init__:
+#              ^^^ reference  requests . `requests.api`/get().
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/single_class/.
+// Matches scip-python's output.
+#[test]
+fn test_ported_single_class() {
+    assert_index(
+        &[(
+            "src.single_class",
+            r#"class ExampleClass:
+    a: int
+    b: int
+    c: str
+
+    static_var = "Hello World"
+
+    def __init__(self, a: int, b: int):
+        local_c = ", world!"
+
+        self.a = a
+        self.b = b
+        self.c = "hello" + local_c
+"#,
+        )],
+        r#"
+# src/single_class.py
+# < definition scip-python python snapshot-util 0.1 `src.single_class`/__init__:
+class ExampleClass:
+#     ^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#
+#      enclosing [0, 0, 12, 34]
+    a: int
+#   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#a.
+#    enclosing [1, 4, 10]
+#      ^^^ reference  python-stdlib 3.12 builtins/int#
+    b: int
+#   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#b.
+#    enclosing [2, 4, 10]
+#      ^^^ reference  python-stdlib 3.12 builtins/int#
+    c: str
+#   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#c.
+#    enclosing [3, 4, 10]
+#      ^^^ reference  python-stdlib 3.12 builtins/str#
+
+    static_var = "Hello World"
+#   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#static_var.
+#    enclosing [5, 4, 30]
+
+    def __init__(self, a: int, b: int):
+#       ^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().
+#        enclosing [7, 4, 12, 34]
+#                ^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
+#                      ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(a)
+#                         ^^^ reference  python-stdlib 3.12 builtins/int#
+#                              ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(b)
+#                                 ^^^ reference  python-stdlib 3.12 builtins/int#
+        local_c = ", world!"
+#       ^^^^^^^ definition local 0
+
+        self.a = a
+#       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
+#            ^ reference[write]  snapshot-util 0.1 `src.single_class`/ExampleClass#a.
+#                ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(a)
+        self.b = b
+#       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
+#            ^ reference[write]  snapshot-util 0.1 `src.single_class`/ExampleClass#b.
+#                ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(b)
+        self.c = "hello" + local_c
+#       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
+#            ^ reference[write]  snapshot-util 0.1 `src.single_class`/ExampleClass#c.
+#                          ^^^^^^^ reference local 0
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/single_function/.
+// Matches scip-python's output, except that scip-python appends the parameter's name to the
+// local symbol of a lambda parameter (`local 2(y)`), and resolves the keyword argument in
+// `next_level()(a="wow")`, a call to the result of a call, which pyrefly does not.
+#[test]
+fn test_ported_single_function() {
+    assert_index(
+        &[(
+            "src.single_function",
+            r#"def my_cool_function(a: str) -> str:
+    x = ", world"
+    return a + x
+
+def my_cool_function_2(a: str):
+    x = ", world"
+    return (lambda y: a + x + y)("oh no")
+
+def next_level():
+    return my_cool_function
+
+my_cool_function("hello")
+next_level()(a = "wow")
+"#,
+        )],
+        r#"
+# src/single_function.py
+# < definition scip-python python snapshot-util 0.1 `src.single_function`/__init__:
+def my_cool_function(a: str) -> str:
+#   ^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function().
+#    enclosing [0, 0, 2, 16]
+#                    ^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function().(a)
+#                       ^^^ reference  python-stdlib 3.12 builtins/str#
+#                               ^^^ reference  python-stdlib 3.12 builtins/str#
+    x = ", world"
+#   ^ definition local 0
+    return a + x
+#          ^ reference  snapshot-util 0.1 `src.single_function`/my_cool_function().(a)
+#              ^ reference local 0
+
+def my_cool_function_2(a: str):
+#   ^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function_2().
+#    enclosing [4, 0, 6, 41]
+#                      ^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function_2().(a)
+#                         ^^^ reference  python-stdlib 3.12 builtins/str#
+    x = ", world"
+#   ^ definition local 1
+    return (lambda y: a + x + y)("oh no")
+#                  ^ definition local 2
+#                     ^ reference  snapshot-util 0.1 `src.single_function`/my_cool_function_2().(a)
+#                         ^ reference local 1
+#                             ^ reference local 2
+
+def next_level():
+#   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_function`/next_level().
+#    enclosing [8, 0, 9, 27]
+    return my_cool_function
+#          ^^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 `src.single_function`/my_cool_function().
+
+my_cool_function("hello")
+#^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 `src.single_function`/my_cool_function().
+next_level()(a = "wow")
+#^^^^^^^^^ reference  snapshot-util 0.1 `src.single_function`/next_level().
+"#,
+    );
+}
+
+// Ported from scip-python's snapshot tests (MIT license):
+// packages/pyright-scip/snapshots/input/unresolved_import/.
+// Matches scip-python's output, except the unresolved `this_is_not_real`, which scip-python
+// gives a local symbol and pyrefly no occurrence (GOAL.md §5.1, `unresolved-name` in
+// scip-goal/ADJUDICATIONS.md).
+#[test]
+fn test_ported_unresolved_import() {
+    assert_index(
+        &[(
+            "unresolved",
+            r#"import this_is_not_real
+
+print(this_is_not_real.x)
+print(this_is_not_real.x)
+
+"#,
+        )],
+        r#"
+# unresolved.py
+# < definition scip-python python snapshot-util 0.1 unresolved/__init__:
+import this_is_not_real
+
+print(this_is_not_real.x)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+print(this_is_not_real.x)
+#^^^^ reference  python-stdlib 3.12 builtins/print().
+"#,
+    );
+}
