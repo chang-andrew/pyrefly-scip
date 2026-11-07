@@ -124,14 +124,20 @@ fn find_definition_key_from<'a>(bindings: &'a Bindings, key: &'a Key) -> Option<
             Binding::PossibleLegacyTParam(legacy_tparam, ..) => {
                 current_idx = bindings.get(*legacy_tparam).idx();
             }
+            // An assignment to an item or attribute of a name (`d["k"].a = 1`) leads back to
+            // the name's binding at that statement, which leads to its previous binding: each
+            // link points to an earlier statement, so the chain can't loop, and following it
+            // doesn't spend gas. A long run of such assignments would otherwise exhaust it.
             Binding::AssignToSubscript(x)
                 if let Some(key) = base_key_of_assign_target(&Expr::Subscript(x.0.clone())) =>
             {
+                gas.restore();
                 current_idx = bindings.key_to_idx(&key);
             }
             Binding::AssignToAttribute(x)
                 if let Some(key) = base_key_of_assign_target(&Expr::Attribute(x.attr.clone())) =>
             {
+                gas.restore();
                 current_idx = bindings.key_to_idx(&key);
             }
             Binding::OuterClassTypeParameter(k, _) => {

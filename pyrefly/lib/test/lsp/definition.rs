@@ -5237,6 +5237,17 @@ def f(exc: Exception) -> None:
 }
 
 #[test]
+fn definition_after_many_assignments_to_items_of_a_name() {
+    let assignments: String = (0..60).map(|i| format!("d[\"k{i}\"].a = {i}\n")).collect();
+    let code = format!("from typing import Any\nd: dict[str, Any] = {{}}\n{assignments}d\n#^\n");
+    let report = get_batched_lsp_operations_report(&[("main", &code)], get_test_report);
+    assert!(
+        report.contains("Definition Result:\n2 | d: dict[str, Any] = {}"),
+        "missing definition of `d` after the assignments:\n{report}"
+    );
+}
+
+#[test]
 fn keyword_argument_test_class_field_and_own_init() {
     let code = r#"
 class Foo:
