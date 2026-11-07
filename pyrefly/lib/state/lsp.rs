@@ -1812,6 +1812,18 @@ impl<'a> Transaction<'a> {
     }
 
     /// Resolve a named import through re-exports and package submodules.
+    /// The export that refers to the module of `handle` as a whole.
+    fn module_export(&self, handle: &Handle) -> Export {
+        Export {
+            location: TextRange::default(),
+            symbol_kind: Some(SymbolKind::Module),
+            docstring_range: self.get_module_docstring_range(handle),
+            deprecation: None,
+            is_final: false,
+            special_export: None,
+        }
+    }
+
     pub(crate) fn resolve_named_import(
         &self,
         handle: &Handle,
@@ -1843,19 +1855,8 @@ impl<'a> Transaction<'a> {
                         if let Some(sub_handle) =
                             self.import_handle_with_preference(handle, submodule, preference)
                         {
-                            let docstring_range = self.get_module_docstring_range(&sub_handle);
-                            return Some((
-                                sub_handle,
-                                name,
-                                Export {
-                                    location: TextRange::default(),
-                                    symbol_kind: Some(SymbolKind::Module),
-                                    docstring_range,
-                                    deprecation: None,
-                                    is_final: false,
-                                    special_export: None,
-                                },
-                            ));
+                            let export = self.module_export(&sub_handle);
+                            return Some((sub_handle, name, export));
                         }
                         return self.resolve_named_import(
                             handle,
@@ -1870,6 +1871,19 @@ impl<'a> Transaction<'a> {
                     return Some((hop_handle, name, export));
                 }
                 ExportLocation::OtherModule(module, aliased_name) => {
+                    // `import x` (or `import x.y`) binds `x` to the module `x` itself, not to a
+                    // name in it, as `from x import x` would.
+                    if aliased_name.is_none()
+                        && self.get_exports_data(&hop_handle).imports_module(&name)
+                    {
+                        let module_handle = self.import_handle_with_preference(
+                            &hop_handle,
+                            ModuleName::from_name(&name),
+                            preference,
+                        )?;
+                        let export = self.module_export(&module_handle);
+                        return Some((module_handle, name, export));
+                    }
                     if let Some(aliased_name) = aliased_name {
                         name = aliased_name;
                     }
@@ -1877,19 +1891,8 @@ impl<'a> Transaction<'a> {
                         let submodule = m.append(&name);
                         let sub_handle =
                             self.import_handle_with_preference(&hop_handle, submodule, preference)?;
-                        let docstring_range = self.get_module_docstring_range(&sub_handle);
-                        return Some((
-                            sub_handle,
-                            name,
-                            Export {
-                                location: TextRange::default(),
-                                symbol_kind: Some(SymbolKind::Module),
-                                docstring_range,
-                                deprecation: None,
-                                is_final: false,
-                                special_export: None,
-                            },
-                        ));
+                        let export = self.module_export(&sub_handle);
+                        return Some((sub_handle, name, export));
                     }
                     m = module;
                 }

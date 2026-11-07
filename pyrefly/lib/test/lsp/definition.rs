@@ -5248,6 +5248,35 @@ fn definition_after_many_assignments_to_items_of_a_name() {
 }
 
 #[test]
+fn module_reexported_through_star_import() {
+    let tools = r#"
+def tools() -> None: ...
+def run() -> None: ...
+"#;
+    let code = r#"
+from reexports import *
+tools.run()
+#^
+"#;
+    let report = get_batched_lsp_operations_report(
+        &[
+            ("tools", tools),
+            ("reexports", "import tools\n"),
+            ("main", code),
+        ],
+        get_test_report,
+    );
+    assert!(
+        !report.contains("def tools() -> None"),
+        "`tools` resolved to the function, not the module:\n{report}"
+    );
+    assert!(
+        report.contains("Definition Result:\n1 | \n"),
+        "`tools` did not resolve to the module `tools`:\n{report}"
+    );
+}
+
+#[test]
 fn keyword_argument_test_class_field_and_own_init() {
     let code = r#"
 class Foo:
