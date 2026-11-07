@@ -7,6 +7,16 @@
 
 use crate::testcase;
 
+// Control characters without a named escape are displayed as `\xNN`, as Python's `repr` does,
+// so that a displayed type, which may end up in a hover or an index, holds only printable text.
+testcase!(
+    test_literal_str_control_characters_are_escaped,
+    r#"
+from typing import reveal_type
+reveal_type("a\x00b\x1b\x7f\n")  # E: revealed type: Literal['a\x00b\x1b\x7f\n']
+"#,
+);
+
 testcase!(
     test_fstring_literal,
     r#"
