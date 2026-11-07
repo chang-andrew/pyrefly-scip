@@ -1121,13 +1121,26 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         .forall(tparams);
         ty = self.move_return_tparams_of_type(ty);
         for (decorator, range) in def.decorators.iter().rev() {
-            // Blame only the decorator that turns a known type into an unknown one. A decorator
-            // whose own type is `Any` is reported where the decorators are collected, and a
-            // decorator applied to an already-unknown type did not cause it.
-            let was_known = !ty.is_any() && !ty.has_top_level_implicit_any();
-            ty =
-                self.apply_function_decorator(decorator.clone(), ty, &def.metadata, *range, errors);
-            if was_known && !decorator.is_any() && ty.has_top_level_implicit_any() {
+            let decorated = self.apply_function_decorator(
+                decorator.clone(),
+                ty.clone(),
+                &def.metadata,
+                *range,
+                errors,
+            );
+            // As in pyright, a decorator whose result is unknown (an implicit or error `Any`, or
+            // a union with an implicit `Any`) is ignored, so the function keeps its type; an
+            // unresolved decorator is the common case. A decorator whose own type is an explicit
+            // `Any` is the user's choice, and is applied.
+            if matches!(decorator, Type::Any(AnyStyle::Explicit))
+                || !(decorated.has_top_level_implicit_any() || decorated.is_error())
+            {
+                ty = decorated;
+                continue;
+            }
+            // Blame only a decorator that would turn a known type into an unknown one. A
+            // decorator whose own type is `Any` is reported where the decorators are collected.
+            if !decorator.is_any() && !ty.is_any() {
                 self.error(
                     errors,
                     *range,

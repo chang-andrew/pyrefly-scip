@@ -2565,6 +2565,54 @@ def g() -> int:
 "#,
 );
 
+// As in pyright, a decorator whose result is unknown is ignored, so calls to the function keep
+// its signature and return type. Unresolved decorators are the common case.
+testcase!(
+    test_unknown_function_decorator_keeps_signature,
+    r#"
+from typing import assert_type
+from missing_module import deco, make_deco  # E: Cannot find module `missing_module`
+
+def untyped(f):
+    return f
+
+@deco
+def f(x: int) -> str: ...
+
+@make_deco(1)
+def g(x: int) -> str: ...
+
+@untyped
+def h(x: int) -> str: ...
+
+class C:
+    @deco
+    def m(self, x: int) -> str: ...
+
+assert_type(f(1), str)
+assert_type(g(1), str)
+assert_type(h(1), str)
+assert_type(C().m(1), str)
+f("a")  # E: Argument `Literal['a']` is not assignable to parameter `x` with type `int`
+"#,
+);
+
+// An explicit `Any` is the user's choice, so a decorator returning it is applied.
+testcase!(
+    test_explicit_any_function_decorator_is_applied,
+    r#"
+from typing import Any, assert_type
+
+def anydec(f) -> Any: ...
+
+@anydec
+def k() -> int:
+    return 1
+
+assert_type(k, Any)
+"#,
+);
+
 // A decorator with no definition after it parses as a nameless function, whose
 // decorators still have to be bound: a walrus in one defines a real name.
 testcase!(
