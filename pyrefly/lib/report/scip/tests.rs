@@ -777,6 +777,139 @@ Child(origin=1)
     );
 }
 
+/// A member reference through a receiver whose class overrides the member names the override,
+/// not the base's declaration: a method, a class attribute, an instance attribute and a
+/// Django-style `objects` manager (GOAL.md B1). Inside the base class, `self` is the base, so
+/// its references name the base's declarations.
+#[test]
+fn test_reference_to_overriding_member() {
+    assert_index(
+        &[(
+            "main",
+            r#"
+class Manager: ...
+class PartManager(Manager): ...
+
+class Model:
+    objects = Manager()
+    limit = 1
+
+    def __init__(self) -> None:
+        self.label = "model"
+
+    def run(self) -> None:
+        self.run()
+
+class Part(Model):
+    objects = PartManager()
+    limit = 2
+
+    def __init__(self) -> None:
+        self.label = "part"
+
+    def run(self) -> None: ...
+
+def use(part: Part) -> None:
+    part.run()
+    part.limit
+    part.label
+    Part.objects
+    Part.limit
+"#,
+        )],
+        r#"
+# main.py
+# < definition scip-python python snapshot-util 0.1 main/__init__:
+
+class Manager: ...
+#     ^^^^^^^ definition  snapshot-util 0.1 main/Manager#
+#      enclosing [1, 0, 18]
+class PartManager(Manager): ...
+#     ^^^^^^^^^^^ definition  snapshot-util 0.1 main/PartManager#
+#      enclosing [2, 0, 31]
+#      relationship implementation  snapshot-util 0.1 main/Manager#
+#                 ^^^^^^^ reference  snapshot-util 0.1 main/Manager#
+
+class Model:
+#     ^^^^^ definition  snapshot-util 0.1 main/Model#
+#      enclosing [4, 0, 12, 18]
+    objects = Manager()
+#   ^^^^^^^ definition  snapshot-util 0.1 main/Model#objects.
+#    enclosing [5, 4, 23]
+#             ^^^^^^^ reference  snapshot-util 0.1 main/Manager#
+    limit = 1
+#   ^^^^^ definition  snapshot-util 0.1 main/Model#limit.
+#    enclosing [6, 4, 13]
+
+    def __init__(self) -> None:
+#       ^^^^^^^^ definition  snapshot-util 0.1 main/Model#__init__().
+#        enclosing [8, 4, 9, 28]
+#                ^^^^ definition  snapshot-util 0.1 main/Model#__init__().(self)
+        self.label = "model"
+#       ^^^^ reference  snapshot-util 0.1 main/Model#__init__().(self)
+#            ^^^^^ definition  snapshot-util 0.1 main/Model#label.
+#             enclosing [9, 8, 28]
+
+    def run(self) -> None:
+#       ^^^ definition  snapshot-util 0.1 main/Model#run().
+#        enclosing [11, 4, 12, 18]
+#           ^^^^ definition  snapshot-util 0.1 main/Model#run().(self)
+        self.run()
+#       ^^^^ reference  snapshot-util 0.1 main/Model#run().(self)
+#            ^^^ reference  snapshot-util 0.1 main/Model#run().
+
+class Part(Model):
+#     ^^^^ definition  snapshot-util 0.1 main/Part#
+#      enclosing [14, 0, 21, 30]
+#      relationship implementation  snapshot-util 0.1 main/Model#
+#          ^^^^^ reference  snapshot-util 0.1 main/Model#
+    objects = PartManager()
+#   ^^^^^^^ definition  snapshot-util 0.1 main/Part#objects.
+#    enclosing [15, 4, 27]
+#             ^^^^^^^^^^^ reference  snapshot-util 0.1 main/PartManager#
+    limit = 2
+#   ^^^^^ definition  snapshot-util 0.1 main/Part#limit.
+#    enclosing [16, 4, 13]
+
+    def __init__(self) -> None:
+#       ^^^^^^^^ definition  snapshot-util 0.1 main/Part#__init__().
+#        enclosing [18, 4, 19, 27]
+#                ^^^^ definition  snapshot-util 0.1 main/Part#__init__().(self)
+        self.label = "part"
+#       ^^^^ reference  snapshot-util 0.1 main/Part#__init__().(self)
+#            ^^^^^ definition  snapshot-util 0.1 main/Part#label.
+#             enclosing [19, 8, 27]
+
+    def run(self) -> None: ...
+#       ^^^ definition  snapshot-util 0.1 main/Part#run().
+#        enclosing [21, 4, 30]
+#        relationship implementation  snapshot-util 0.1 main/Model#run().
+#           ^^^^ definition  snapshot-util 0.1 main/Part#run().(self)
+
+def use(part: Part) -> None:
+#   ^^^ definition  snapshot-util 0.1 main/use().
+#    enclosing [23, 0, 28, 14]
+#       ^^^^ definition  snapshot-util 0.1 main/use().(part)
+#             ^^^^ reference  snapshot-util 0.1 main/Part#
+    part.run()
+#   ^^^^ reference  snapshot-util 0.1 main/use().(part)
+#        ^^^ reference  snapshot-util 0.1 main/Part#run().
+    part.limit
+#   ^^^^ reference  snapshot-util 0.1 main/use().(part)
+#        ^^^^^ reference  snapshot-util 0.1 main/Part#limit.
+    part.label
+#   ^^^^ reference  snapshot-util 0.1 main/use().(part)
+#        ^^^^^ reference  snapshot-util 0.1 main/Part#label.
+    Part.objects
+#   ^^^^ reference  snapshot-util 0.1 main/Part#
+#        ^^^^^^^ reference  snapshot-util 0.1 main/Part#objects.
+    Part.limit
+#   ^^^^ reference  snapshot-util 0.1 main/Part#
+#        ^^^^^ reference  snapshot-util 0.1 main/Part#limit.
+"#,
+    );
+}
+
 // Ported from scip-python's snapshot tests (MIT license):
 // packages/pyright-scip/snapshots/input/unique/inherits_class.py and grandparent_impl.py.
 // The occurrences and relationships match scip-python's, except `NotImplemented`, which
