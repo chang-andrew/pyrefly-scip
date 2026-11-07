@@ -50,6 +50,20 @@ impl ModuleDiagnostics {
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &Error> {
         self.0.iter()
     }
+
+    /// The diagnostics whose range is not inside any of `ranges`.
+    pub fn without_ranges(self, ranges: &[TextRange]) -> Self {
+        if ranges.is_empty() {
+            return self;
+        }
+        Self(
+            self.0
+                .iter()
+                .filter(|e| !ranges.iter().any(|r| r.contains_range(e.range())))
+                .cloned()
+                .collect(),
+        )
+    }
 }
 
 impl ModuleErrors {

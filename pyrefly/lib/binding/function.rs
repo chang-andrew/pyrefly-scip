@@ -65,6 +65,8 @@ use crate::binding::binding::KeyExpect;
 use crate::binding::binding::KeyLegacyTypeParam;
 use crate::binding::binding::KeyUndecoratedFunction;
 use crate::binding::binding::KeyUndecoratedFunctionRange;
+use crate::binding::binding::KeyYield;
+use crate::binding::binding::KeyYieldFrom;
 use crate::binding::binding::LastStmt;
 use crate::binding::binding::MethodSelfKind;
 use crate::binding::binding::NNModuleRegistrations;
@@ -283,7 +285,7 @@ impl<'a> SelfAttrNames<'a> {
     fn find(
         func_name: &Identifier,
         parameters: &mut Box<Parameters>,
-        body: ThinVec<Stmt>,
+        body: &[Stmt],
     ) -> Option<SelfAssignments> {
         let self_name = &parameters
             .iter_non_variadic_params()
@@ -295,7 +297,7 @@ impl<'a> SelfAttrNames<'a> {
             self_name,
             names: SmallMap::new(),
         };
-        for x in body.iter() {
+        for x in body {
             finder.stmt(x);
         }
         let instance_attributes = finder
@@ -544,6 +546,7 @@ impl<'a> BindingsBuilder<'a> {
         method_self_kind: MethodSelfKind,
         has_receiver: bool,
         override_func: Option<Idx<KeyUndecoratedFunction>>,
+        ignore_annotations: bool,
     ) -> (
         YieldsAndReturns,
         Option<SelfAssignments>,
@@ -559,7 +562,7 @@ impl<'a> BindingsBuilder<'a> {
             method_self_kind,
             has_receiver,
             override_func,
-            false,
+            ignore_annotations,
         );
         self.init_static_scope(&body, false);
         self.seed_captured_variables();
@@ -590,9 +593,9 @@ impl<'a> BindingsBuilder<'a> {
     }
 
     /// Lightweight alternative to `function_body_scope`: creates parameter
-    /// bindings but does not analyze the body statements.  Used when
-    /// `check_unannotated_defs = false` (in CLI/batch mode) or
-    /// `@no_type_check` to avoid wasted work.
+    /// bindings but does not analyze the body statements.  Used in CLI/batch
+    /// mode when `check_unannotated_defs = false` or for `@no_type_check`, to
+    /// avoid wasted work.
     fn unchecked_function_body_scope(
         &mut self,
         parameters: &mut Box<Parameters>,
@@ -622,7 +625,7 @@ impl<'a> BindingsBuilder<'a> {
         self.scopes.pop();
         // Receiver methods use a simple visitor to find `self.<attr>` assignments.
         if has_receiver {
-            SelfAttrNames::find(func_name, parameters, body)
+            SelfAttrNames::find(func_name, parameters, &body)
         } else {
             None
         }
@@ -669,52 +672,8 @@ impl<'a> BindingsBuilder<'a> {
             } else {
                 None
             };
-
-        // Collect the keys of explicit returns.
-        let return_keys = yields_and_returns
-            .returns
-            .into_map(|(idx, x, is_unreachable)| {
-                self.insert_binding_idx(
-                    idx,
-                    Binding::ReturnExplicit(ReturnExplicit {
-                        annot: return_ann,
-                        expr: x.value,
-                        is_generator,
-                        is_async,
-                        range: x.range,
-                        is_unreachable,
-                    }),
-                )
-            })
-            .into_boxed_slice();
-
-        // Collect the keys of yield expressions.
-        let yield_keys = yields_and_returns
-            .yields
-            .into_map(|(idx, x, is_unreachable)| {
-                self.insert_binding_idx(
-                    idx,
-                    if is_unreachable {
-                        BindingYield::Unreachable(x)
-                    } else {
-                        BindingYield::Yield(return_ann, x)
-                    },
-                )
-            })
-            .into_boxed_slice();
-        let yield_from_keys = yields_and_returns
-            .yield_froms
-            .into_map(|(idx, x, is_unreachable)| {
-                self.insert_binding_idx(
-                    idx,
-                    if is_unreachable {
-                        BindingYieldFrom::Unreachable(x)
-                    } else {
-                        BindingYieldFrom::YieldFrom(return_ann, IsAsync::new(is_async), x)
-                    },
-                )
-            })
-            .into_boxed_slice();
+        let (return_keys, yield_keys, yield_from_keys) =
+            self.bind_yields_and_returns(yields_and_returns, return_ann, is_async);
 
         let return_type_binding = {
             let kind = match (return_ann_with_range, implicit_return, is_stub) {
@@ -772,6 +731,67 @@ impl<'a> BindingsBuilder<'a> {
             Key::ReturnType(ShortIdentifier::new(func_name)),
             return_type_binding,
         );
+    }
+
+    /// Binds the explicit returns, yields and `yield from`s of a function body, which are checked
+    /// against `return_ann` if there is one, and returns their keys.
+    fn bind_yields_and_returns(
+        &mut self,
+        yields_and_returns: YieldsAndReturns,
+        return_ann: Option<Idx<KeyAnnotation>>,
+        is_async: bool,
+    ) -> (
+        Box<[Idx<Key>]>,
+        Box<[Idx<KeyYield>]>,
+        Box<[Idx<KeyYieldFrom>]>,
+    ) {
+        let is_generator = yields_and_returns.is_generator;
+        // Collect the keys of explicit returns.
+        let return_keys = yields_and_returns
+            .returns
+            .into_map(|(idx, x, is_unreachable)| {
+                self.insert_binding_idx(
+                    idx,
+                    Binding::ReturnExplicit(ReturnExplicit {
+                        annot: return_ann,
+                        expr: x.value,
+                        is_generator,
+                        is_async,
+                        range: x.range,
+                        is_unreachable,
+                    }),
+                )
+            })
+            .into_boxed_slice();
+
+        // Collect the keys of yield expressions.
+        let yield_keys = yields_and_returns
+            .yields
+            .into_map(|(idx, x, is_unreachable)| {
+                self.insert_binding_idx(
+                    idx,
+                    if is_unreachable {
+                        BindingYield::Unreachable(x)
+                    } else {
+                        BindingYield::Yield(return_ann, x)
+                    },
+                )
+            })
+            .into_boxed_slice();
+        let yield_from_keys = yields_and_returns
+            .yield_froms
+            .into_map(|(idx, x, is_unreachable)| {
+                self.insert_binding_idx(
+                    idx,
+                    if is_unreachable {
+                        BindingYieldFrom::Unreachable(x)
+                    } else {
+                        BindingYieldFrom::YieldFrom(return_ann, IsAsync::new(is_async), x)
+                    },
+                )
+            })
+            .into_boxed_slice();
+        (return_keys, yield_keys, yield_from_keys)
     }
 
     fn mark_as_returns_any(
@@ -947,7 +967,7 @@ impl<'a> BindingsBuilder<'a> {
         let is_unannotated =
             !self.check_unannotated_defs && !is_annotated(&return_ann_with_range, parameters);
         let skips_body =
-            decorators.has_no_type_check || (is_unannotated && !self.analyze_unannotated_for_ide);
+            (decorators.has_no_type_check || is_unannotated) && !self.analyze_unannotated_for_ide;
         let override_func =
             (decorators.is_override && class_key.is_some()).then_some(undecorated_idx);
         debug_assert!(override_func.is_none() || class_key.is_some());
@@ -967,6 +987,37 @@ impl<'a> BindingsBuilder<'a> {
                 decorators.has_no_type_check,
             );
             (false, self_assignments)
+        } else if decorators.has_no_type_check {
+            // The body is bound only because IDE features and indexes need its bindings, and
+            // binding it must not change type checking. As when it is skipped, the parameters'
+            // annotations are ignored, the function returns `Any`, and its `self` attributes are
+            // `Any`; the errors in the body are dropped (`Bindings::no_type_check_bodies`).
+            if let (Some(first), Some(last)) = (body.first(), body.last()) {
+                self.no_type_check_bodies
+                    .push(TextRange::new(first.range().start(), last.range().end()));
+            }
+            let self_assignments = if has_receiver {
+                SelfAttrNames::find(func_name, parameters, &body)
+            } else {
+                None
+            };
+            let (yields_and_returns, _, _, _) = self.function_body_scope(
+                parameters,
+                body,
+                range,
+                func_name,
+                parent,
+                undecorated_idx,
+                class_key,
+                is_async,
+                method_self_kind,
+                has_receiver,
+                override_func,
+                true,
+            );
+            self.bind_yields_and_returns(yields_and_returns, None, is_async);
+            self.mark_as_returns_any(func_name, class_key, is_async);
+            (false, self_assignments)
         } else if is_unannotated {
             let implicit_return = Some(self.implicit_return(&body, func_name));
             let (yields_and_returns, self_assignments, _, _) = self.function_body_scope(
@@ -981,6 +1032,7 @@ impl<'a> BindingsBuilder<'a> {
                 method_self_kind,
                 has_receiver,
                 override_func,
+                false,
             );
             self.analyze_return_type(
                 func_name,
@@ -1010,6 +1062,7 @@ impl<'a> BindingsBuilder<'a> {
                     method_self_kind,
                     has_receiver,
                     override_func,
+                    false,
                 );
             if !ignore_unused_parameters {
                 self.record_unused_parameters(unused_parameters);

@@ -523,6 +523,53 @@ assert_type(C(42).x, Any)
 "#,
 );
 
+/// A `@no_type_check` body is bound when IDE features or an index need it (`Require::Everything`)
+/// and skipped otherwise (`Require::Errors`). Binding it must not change type checking: both modes
+/// report the same errors, none of them inside the body, and the function and its `self`
+/// attributes stay `Any`.
+#[test]
+fn test_no_type_check_body_same_errors_in_batch_and_ide_mode() {
+    let code = r#"
+from typing import Any, assert_type, no_type_check
+
+@no_type_check
+def f(x: int) -> int:
+    y: int = "y"
+    undefined_name
+    class Inner:
+        z: int = "z"
+    async def g() -> None:
+        yield 1
+    return "f"
+
+class C:
+    @no_type_check
+    def __init__(self, x: int) -> None:
+        self.x = x
+        self.y: int = "y"
+
+assert_type(f(0), Any)
+assert_type(C(42).x, Any)
+assert_type(C(42).y, Any)
+outside: int = "outside"
+"#;
+    let errors = |require| {
+        let mut env = TestEnv::new().with_run_require(require);
+        env.add("main", code);
+        let (state, handle) = env.to_state();
+        let errors = state.transaction().get_errors([&handle("main")]);
+        errors
+            .collect_errors()
+            .ordinary
+            .iter()
+            .map(|e| e.msg())
+            .collect::<Vec<_>>()
+    };
+    let expected = vec!["`Literal['outside']` is not assignable to `int`".to_owned()];
+    assert_eq!(errors(Require::Errors), expected);
+    assert_eq!(errors(Require::Everything), expected);
+}
+
 // @no_type_check must return Any even when infer-return-types=never.
 testcase!(
     test_no_type_check_with_skip_check_no_infer,

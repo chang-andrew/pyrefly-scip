@@ -777,6 +777,73 @@ Child(origin=1)
     );
 }
 
+/// The body of a `@no_type_check` function is indexed although it is not type checked. As in type
+/// checking, its parameters' annotations are ignored, so `box` is `Any` and `size` on it has no
+/// occurrence.
+#[test]
+fn test_no_type_check_body() {
+    assert_index(
+        &[(
+            "main",
+            r#"
+from typing import no_type_check
+
+LIMIT = 3
+
+class Box:
+    size = 1
+
+@no_type_check
+def run(box: Box, flag=True) -> int:
+    total: int = "x"
+    if flag:
+        return LIMIT + box.size + total
+    return LIMIT
+"#,
+        )],
+        r#"
+# main.py
+# < definition scip-python python snapshot-util 0.1 main/__init__:
+
+from typing import no_type_check
+#    ^^^^^^ reference[import]  python-stdlib 3.12 typing/__init__:
+#                  ^^^^^^^^^^^^^ reference[import]  python-stdlib 3.12 typing/no_type_check().
+
+LIMIT = 3
+#^^^^ definition  snapshot-util 0.1 main/LIMIT.
+# enclosing [3, 0, 9]
+
+class Box:
+#     ^^^ definition  snapshot-util 0.1 main/Box#
+#      enclosing [5, 0, 6, 12]
+    size = 1
+#   ^^^^ definition  snapshot-util 0.1 main/Box#size.
+#    enclosing [6, 4, 12]
+
+@no_type_check
+#^^^^^^^^^^^^^ reference  python-stdlib 3.12 typing/no_type_check().
+def run(box: Box, flag=True) -> int:
+#   ^^^ definition  snapshot-util 0.1 main/run().
+#    enclosing [9, 0, 13, 16]
+#       ^^^ definition  snapshot-util 0.1 main/run().(box)
+#            ^^^ reference  snapshot-util 0.1 main/Box#
+#                 ^^^^ definition  snapshot-util 0.1 main/run().(flag)
+#                               ^^^ reference  python-stdlib 3.12 builtins/int#
+    total: int = "x"
+#   ^^^^^ definition local 0
+#          ^^^ reference  python-stdlib 3.12 builtins/int#
+    if flag:
+#      ^^^^ reference  snapshot-util 0.1 main/run().(flag)
+        return LIMIT + box.size + total
+#              ^^^^^ reference  snapshot-util 0.1 main/LIMIT.
+#                      ^^^ reference  snapshot-util 0.1 main/run().(box)
+#                                 ^^^^^ reference local 0
+    return LIMIT
+#          ^^^^^ reference  snapshot-util 0.1 main/LIMIT.
+"#,
+    );
+}
+
 /// A member reference through a receiver whose class overrides the member names the override,
 /// not the base's declaration: a method, a class attribute, an instance attribute and a
 /// Django-style `objects` manager (GOAL.md B1). Inside the base class, `self` is the base, so
