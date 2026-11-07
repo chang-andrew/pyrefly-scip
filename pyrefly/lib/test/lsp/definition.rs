@@ -5304,6 +5304,82 @@ Definition Result:
     );
 }
 
+/// A keyword argument binds a parameter of the callee's type when the callee is a variable
+/// holding a class or a function, a union of functions (the first one with the parameter), an
+/// overloaded function whose first `def` lacks the parameter, or `TypeVar` in a declaration.
+#[test]
+fn keyword_argument_test_callee_type() {
+    let code = r#"
+from typing import TypeVar, overload
+
+class Pdf:
+    def __init__(self, preview: int) -> None: ...
+
+class Builder:
+    def build(self, names: list[str]) -> str: ...
+    def rebuild(self, names: list[str]) -> str: ...
+
+@overload
+def pick(x: int) -> int: ...
+@overload
+def pick(x: str, *, default: str) -> str: ...
+def pick(x: int | str, default: str | None = None) -> int | str:
+    return x
+
+def test(pdf_class: type[Pdf], builder: Builder, flag: bool) -> None:
+    pdf_class(preview=1)
+#             ^
+    build = builder.build
+    build(names=[])
+#         ^
+    method = builder.build if flag else builder.rebuild
+    method(names=[])
+#          ^
+    pick("a", default="b")
+#              ^
+
+T = TypeVar("T", bound=Pdf)
+#                ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+19 |     pdf_class(preview=1)
+                   ^
+Definition Result:
+5 |     def __init__(self, preview: int) -> None: ...
+                           ^^^^^^^
+
+22 |     build(names=[])
+               ^
+Definition Result:
+8 |     def build(self, names: list[str]) -> str: ...
+                        ^^^^^
+
+25 |     method(names=[])
+                ^
+Definition Result:
+8 |     def build(self, names: list[str]) -> str: ...
+                        ^^^^^
+
+27 |     pick("a", default="b")
+                    ^
+Definition Result:
+14 | def pick(x: str, *, default: str) -> str: ...
+                         ^^^^^^^
+
+30 | T = TypeVar("T", bound=Pdf)
+                      ^
+Definition Result:
+182 |             bound: Any | None = None,  # AnnotationForm
+                  ^^^^^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
 #[test]
 fn keyword_argument_test_inherited_typed_dict_key_and_new() {
     let code = r#"

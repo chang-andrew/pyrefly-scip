@@ -110,6 +110,7 @@ use crate::types::callable::Param;
 use crate::types::callable::Params;
 use crate::types::module::ModuleType;
 use crate::types::type_var::Restriction;
+use crate::types::types::BoundMethodType;
 use crate::types::types::Type;
 
 mod dict_completions;
@@ -1361,29 +1362,47 @@ impl<'a> Transaction<'a> {
         None
     }
 
-    /// The definition that a keyword argument of a class callee refers to when the class's
-    /// own body has none: a parameter of the `__init__` or `__new__` it inherits, or, when
-    /// its `__init__` is synthesized (dataclasses, TypedDicts, classes with an unknown base),
-    /// a field it inherits.
-    fn inherited_keyword_argument_definition(
+    /// The definition that a keyword argument refers to, found from the callee's type, when
+    /// go-to-definition on the callee does not lead to a `def` or class body that has it: see
+    /// `keyword_argument_definition_for_type`.
+    fn keyword_argument_definition_from_callee_type(
         &self,
         handle: &Handle,
         callee_kind: &CalleeKind,
         identifier: &Identifier,
     ) -> Option<(DefinitionMetadata, TextRangeWithModule)> {
-        let callee_range = match callee_kind {
-            CalleeKind::Function(name) => name.range,
+        let (callee_range, name) = match callee_kind {
+            CalleeKind::Function(name) => (name.range, name),
             CalleeKind::Method(base_range, name) => {
-                TextRange::new(base_range.start(), name.range.end())
+                (TextRange::new(base_range.start(), name.range.end()), name)
             }
             CalleeKind::Unknown => return None,
         };
-        let Type::ClassDef(class) = self.get_type_trace(handle, callee_range)? else {
-            return None;
-        };
-        // A constructor whose signature has no parameter of the keyword's name is skipped
-        // before its module is parsed, because a module that is not open, such as a stub, is
-        // parsed again on every lookup.
+        // A callee that the solver handles without inferring it as an expression, such as
+        // `TypeVar` in a `TypeVar(...)` declaration, has no recorded type, so the type of the
+        // name's binding is used instead.
+        let callee_ty = self
+            .get_type_trace(handle, callee_range)
+            .or_else(|| self.get_type_at_preserving_declaration(handle, name.range.start()))?;
+        self.keyword_argument_definition_for_type(handle, &callee_ty, identifier)
+    }
+
+    /// The definition that a keyword argument refers to when the callee has type `ty`.
+    /// - A class object or `type[C]`: a parameter of the `__init__` or `__new__` the class has,
+    ///   which may be inherited, or, when its `__init__` is synthesized (dataclasses,
+    ///   TypedDicts, classes with an unknown base), a field it inherits.
+    /// - A function or method: a parameter of its `def`, or of any `def` of an overload.
+    /// - A union: the definition for the first member that has one, as multi-target lookups
+    ///   elsewhere take the first target.
+    fn keyword_argument_definition_for_type(
+        &self,
+        handle: &Handle,
+        ty: &Type,
+        identifier: &Identifier,
+    ) -> Option<(DefinitionMetadata, TextRangeWithModule)> {
+        // A signature that has no parameter of the keyword's name is skipped before its
+        // module is parsed, because a module that is not open, such as a stub, is parsed again
+        // on every lookup.
         let takes_keyword = |ty: Type| {
             ty.toplevel_callable_signatures()
                 .any(|(callable, _)| match &callable.params {
@@ -1398,10 +1417,50 @@ impl<'a> Transaction<'a> {
                     Params::Ellipsis | Params::Materialization | Params::ParamSpec(..) => false,
                 })
         };
+        let class = match ty {
+            Type::Union(union) => {
+                return union.members.iter().find_map(|member| {
+                    self.keyword_argument_definition_for_type(handle, member, identifier)
+                });
+            }
+            Type::ClassDef(class) => class,
+            Type::Type(instance) => match &**instance {
+                Type::ClassType(cls) => cls.class_object(),
+                _ => return None,
+            },
+            _ => {
+                let overload = match ty {
+                    Type::Overload(overload) => Some(overload),
+                    Type::BoundMethod(method) => match &method.func {
+                        BoundMethodType::Overload(overload) => Some(overload),
+                        BoundMethodType::Function(_) | BoundMethodType::Forall(_) => None,
+                    },
+                    _ => None,
+                };
+                let signatures = match overload {
+                    Some(overload) => overload.signatures.iter().map(|s| s.as_type()).collect(),
+                    None => vec![ty.clone()],
+                };
+                return signatures.into_iter().find_map(|signature| {
+                    let metadata = signature.toplevel_func_metadata()?;
+                    if !takes_keyword(signature.clone()) {
+                        return None;
+                    }
+                    let def = self.function_def_location(handle, metadata)?.ok()?;
+                    let ast = self.get_ast_or_parse_module(handle, &def.module);
+                    let range =
+                        self.refine_param_location_for_callee(&ast, def.range, identifier)?;
+                    Some((
+                        DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
+                        TextRangeWithModule::new(def.module, range),
+                    ))
+                });
+            }
+        };
         let [init, new, field] =
-            self.ad_hoc_solve(handle, "inherited_keyword_argument_definition", |solver| {
+            self.ad_hoc_solve(handle, "keyword_argument_definition_for_type", |solver| {
                 [&dunder::INIT, &dunder::NEW, identifier.id()].map(|name| {
-                    let member = solver.get_class_member_with_defining_class(&class, name)?;
+                    let member = solver.get_class_member_with_defining_class(class, name)?;
                     let range = solver
                         .get_class_fields(&member.defining_class)?
                         .field_decl_range(name)?;
@@ -3024,8 +3083,8 @@ impl<'a> Transaction<'a> {
                         DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
                         param_range,
                     )
-                } else if let Some((metadata, TextRangeWithModule { module, range })) =
-                    self.inherited_keyword_argument_definition(handle, callee_kind, identifier)
+                } else if let Some((metadata, TextRangeWithModule { module, range })) = self
+                    .keyword_argument_definition_from_callee_type(handle, callee_kind, identifier)
                 {
                     results.push(FindDefinitionItem {
                         metadata,
