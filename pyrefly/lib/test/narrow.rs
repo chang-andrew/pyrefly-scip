@@ -809,6 +809,30 @@ def f(x: str | int):
     "#,
 );
 
+// A class with an unknown base is assignable to every class, but that does not make it a
+// subclass: the negative branch must keep it.
+testcase!(
+    test_isinstance_negative_with_any_base,
+    r#"
+from typing import reveal_type
+from missing import Model  # E: Cannot find module `missing`
+
+class A(Model): ...
+class B(Model): ...
+class C(B): ...
+
+def f(x: A | B) -> None:
+    if isinstance(x, B):
+        return
+    reveal_type(x)  # E: revealed type: A
+
+def g(x: A | C) -> None:
+    if isinstance(x, B):
+        return
+    reveal_type(x)  # E: revealed type: A
+    "#,
+);
+
 testcase!(
     test_isinstance_any_union_consumed,
     r#"

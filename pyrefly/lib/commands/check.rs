@@ -346,6 +346,22 @@ struct OutputArgs {
     /// stdlib then record those source files instead of stub paths. Affects Glean output only.
     #[arg(long, value_name = "DIR", requires = "report_glean")]
     glean_stdlib_root: Option<String>,
+    /// Write a SCIP index (https://github.com/sourcegraph/scip) of the checked files.
+    /// Document paths are relative to the current working directory.
+    #[arg(long, value_name = "OUTPUT_FILE")]
+    report_scip: Option<PathBuf>,
+    /// The package name in the SCIP report's project symbols. Defaults to the name of the
+    /// current working directory.
+    #[arg(long, value_name = "NAME", requires = "report_scip")]
+    scip_project_name: Option<String>,
+    /// The package version in the SCIP report's project symbols.
+    #[arg(
+        long,
+        value_name = "VERSION",
+        requires = "report_scip",
+        default_value = "0.0.0"
+    )]
+    scip_project_version: String,
     /// Generate a Pysa-compatible JSON file for each module. Pysa treats every type error
     /// as a failure, so this defaults `--min-severity` to `error`.
     #[arg(long, value_name = "OUTPUT_FILE")]
@@ -518,6 +534,9 @@ impl OutputArgs {
             report_glean_ownership,
             glean_module_names,
             glean_stdlib_root,
+            report_scip,
+            scip_project_name,
+            scip_project_version: _,
             report_pysa,
             report_pysa_format,
             report_demand_tree,
@@ -564,6 +583,8 @@ impl OutputArgs {
             || *report_glean_ownership
             || glean_module_names.is_some()
             || glean_stdlib_root.is_some()
+            || report_scip.is_some()
+            || scip_project_name.is_some()
             || report_pysa.is_some()
             || !matches!(report_pysa_format, report::pysa::PysaFormat::Capnp)
             || report_demand_tree.is_some()
@@ -1902,7 +1923,8 @@ impl CheckArgs {
             || self.output.report_trace.is_some()
             || self.output.report_glean.is_some();
         RequireLevels {
-            specified: if retain {
+            // The SCIP report reads the AST and type traces of every checked file.
+            specified: if retain || self.output.report_scip.is_some() {
                 Require::Everything
             } else {
                 Require::Errors
@@ -2440,6 +2462,15 @@ impl CheckArgs {
                     ),
                 )?;
             }
+        }
+        if let Some(path) = &self.output.report_scip {
+            report::scip::write_scip(
+                transaction,
+                handles,
+                path,
+                self.output.scip_project_name.as_deref(),
+                &self.output.scip_project_version,
+            )?;
         }
         if let Some(pysa_reporter) = transaction.take_pysa_reporter() {
             report::pysa::write_project_file(&pysa_reporter, transaction, handles, &output_errors)?;

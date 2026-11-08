@@ -1832,6 +1832,35 @@ Definition Result:
 }
 
 #[test]
+fn keyword_argument_test_inherited_init() {
+    let code = r#"
+class Base:
+    def __init__(self, origin: int) -> None:
+        pass
+
+class Child(Base):
+    pass
+
+def test() -> None:
+    Child(origin=1)
+#         ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+10 |     Child(origin=1)
+               ^
+Definition Result:
+3 |     def __init__(self, origin: int) -> None:
+                           ^^^^^^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
+#[test]
 fn keyword_argument_test_multiple_methods() {
     let code = r#"
 class A:
@@ -5157,5 +5186,271 @@ object.__setattr__
     assert!(
         report.contains("def __setattr__"),
         "missing definition of `object.__setattr__`:\n{report}"
+    );
+}
+
+#[test]
+fn attribute_inherited_from_object() {
+    let code = r#"
+class Base:
+    pass
+
+def f(obj: Base) -> None:
+    obj.__class__
+#        ^
+    obj.__dict__
+#        ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert!(
+        report.contains("def __class__(self)") && report.contains("__dict__: dict[str, Any]"),
+        "missing definitions of members inherited from `object`:\n{report}"
+    );
+}
+
+#[test]
+fn attribute_of_metaclass_on_class_object() {
+    let code = r#"
+from enum import Enum
+
+class Base:
+    pass
+
+class Kind(Enum):
+    A = 1
+
+def f(exc: Exception) -> None:
+    type(exc).__name__
+#              ^
+    Base.__subclasses__()
+#          ^
+    Kind.__members__
+#          ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert!(
+        report.contains("__name__: str")
+            && report.contains("def __subclasses__(self")
+            && report.contains("def __members__(self"),
+        "missing definitions of metaclass members:\n{report}"
+    );
+}
+
+#[test]
+fn definition_after_many_assignments_to_items_of_a_name() {
+    let assignments: String = (0..60).map(|i| format!("d[\"k{i}\"].a = {i}\n")).collect();
+    let code = format!("from typing import Any\nd: dict[str, Any] = {{}}\n{assignments}d\n#^\n");
+    let report = get_batched_lsp_operations_report(&[("main", &code)], get_test_report);
+    assert!(
+        report.contains("Definition Result:\n2 | d: dict[str, Any] = {}"),
+        "missing definition of `d` after the assignments:\n{report}"
+    );
+}
+
+#[test]
+fn module_reexported_through_star_import() {
+    let tools = r#"
+def tools() -> None: ...
+def run() -> None: ...
+"#;
+    let code = r#"
+from reexports import *
+tools.run()
+#^
+"#;
+    let report = get_batched_lsp_operations_report(
+        &[
+            ("tools", tools),
+            ("reexports", "import tools\n"),
+            ("main", code),
+        ],
+        get_test_report,
+    );
+    assert!(
+        !report.contains("def tools() -> None"),
+        "`tools` resolved to the function, not the module:\n{report}"
+    );
+    assert!(
+        report.contains("Definition Result:\n1 | \n"),
+        "`tools` did not resolve to the module `tools`:\n{report}"
+    );
+}
+
+#[test]
+fn keyword_argument_test_class_field_and_own_init() {
+    let code = r#"
+class Foo:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+def test() -> None:
+    Foo(x=1)
+#       ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+9 |     Foo(x=1)
+            ^
+Definition Result:
+5 |     def __init__(self, x: int) -> None:
+                           ^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
+/// The value under a key that a TypedDict does not declare is still inferred, so its attributes
+/// have definitions.
+#[test]
+fn definition_in_value_of_undeclared_typed_dict_key() {
+    let code = r#"
+from enum import Enum
+from typing import TypedDict
+
+class Method(Enum):
+    EMAIL = "Email"
+
+class Event(TypedDict):
+    kind: str
+
+event: Event = {"kind": "a", "method": Method.EMAIL}
+#                                             ^
+"#;
+    let report = get_batched_lsp_operations_report_allow_error(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+11 | event: Event = {"kind": "a", "method": Method.EMAIL}
+                                                   ^
+Definition Result:
+6 |     EMAIL = "Email"
+        ^^^^^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
+/// A keyword argument binds a parameter of the callee's type when the callee is a variable
+/// holding a class or a function, a union of functions (the first one with the parameter), an
+/// overloaded function whose first `def` lacks the parameter, or `TypeVar` in a declaration.
+#[test]
+fn keyword_argument_test_callee_type() {
+    let code = r#"
+from typing import TypeVar, overload
+
+class Pdf:
+    def __init__(self, preview: int) -> None: ...
+
+class Builder:
+    def build(self, names: list[str]) -> str: ...
+    def rebuild(self, names: list[str]) -> str: ...
+
+@overload
+def pick(x: int) -> int: ...
+@overload
+def pick(x: str, *, default: str) -> str: ...
+def pick(x: int | str, default: str | None = None) -> int | str:
+    return x
+
+def test(pdf_class: type[Pdf], builder: Builder, flag: bool) -> None:
+    pdf_class(preview=1)
+#             ^
+    build = builder.build
+    build(names=[])
+#         ^
+    method = builder.build if flag else builder.rebuild
+    method(names=[])
+#          ^
+    pick("a", default="b")
+#              ^
+
+T = TypeVar("T", bound=Pdf)
+#                ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+19 |     pdf_class(preview=1)
+                   ^
+Definition Result:
+5 |     def __init__(self, preview: int) -> None: ...
+                           ^^^^^^^
+
+22 |     build(names=[])
+               ^
+Definition Result:
+8 |     def build(self, names: list[str]) -> str: ...
+                        ^^^^^
+
+25 |     method(names=[])
+                ^
+Definition Result:
+8 |     def build(self, names: list[str]) -> str: ...
+                        ^^^^^
+
+27 |     pick("a", default="b")
+                    ^
+Definition Result:
+14 | def pick(x: str, *, default: str) -> str: ...
+                         ^^^^^^^
+
+30 | T = TypeVar("T", bound=Pdf)
+                      ^
+Definition Result:
+182 |             bound: Any | None = None,  # AnnotationForm
+                  ^^^^^
+"#
+        .trim(),
+        report.trim(),
+    );
+}
+
+#[test]
+fn keyword_argument_test_inherited_typed_dict_key_and_new() {
+    let code = r#"
+from typing import TypedDict
+
+class Base(TypedDict):
+    clinic: int
+
+class Child(Base):
+    client: int
+
+class Counter:
+    def __new__(cls, start: int = 0) -> "Counter": ...
+
+class SubCounter(Counter): ...
+
+def test() -> None:
+    Child(clinic=1, client=2)
+#         ^
+    SubCounter(start=1)
+#              ^
+"#;
+    let report = get_batched_lsp_operations_report(&[("main", code)], get_test_report);
+    assert_eq!(
+        r#"
+# main.py
+16 |     Child(clinic=1, client=2)
+               ^
+Definition Result:
+5 |     clinic: int
+        ^^^^^^
+
+18 |     SubCounter(start=1)
+                    ^
+Definition Result:
+11 |     def __new__(cls, start: int = 0) -> "Counter": ...
+                          ^^^^^
+"#
+        .trim(),
+        report.trim(),
     );
 }

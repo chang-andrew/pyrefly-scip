@@ -82,11 +82,16 @@ pub(crate) fn write_escaped_string(
             '\x0b' => Some("\\v"),
             _ => None,
         };
-        if let Some(escape) = escape {
+        if escape.is_some() || c.is_ascii_control() {
             if start < i {
                 f.write_str(&s[start..i])?;
             }
-            f.write_str(escape)?;
+            match escape {
+                Some(escape) => f.write_str(escape)?,
+                // Other control characters, such as NUL, are written as `\xNN`, as Python's
+                // `repr` does, so that the display holds only printable text.
+                None => write!(f, "\\x{:02x}", c as u32)?,
+            }
             start = i + c.len_utf8();
         }
     }

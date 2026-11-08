@@ -446,6 +446,9 @@ pub struct Bindings {
     annotated_metadata_ranges: Vec<TextRange>,
     /// Ranges of the types that were read from docstrings, sorted and non-overlapping.
     docstring_type_ranges: Vec<TextRange>,
+    /// The bodies of `@no_type_check` functions that were bound for IDE features and indexes.
+    /// Errors inside them are dropped, as when the bodies are skipped.
+    no_type_check_bodies: Vec<TextRange>,
     scope_trace: Option<ScopeTrace>,
     /// Names `del`eted at module scope; retained outside the LSP `scope_trace`.
     module_deletes: SmallSet<Name>,
@@ -542,6 +545,8 @@ pub struct BindingsBuilder<'a> {
     pub(crate) annotated_metadata_ranges: Vec<TextRange>,
     /// Ranges of the types that were read from docstrings.
     pub(crate) docstring_type_ranges: Vec<TextRange>,
+    /// See `Bindings::no_type_check_bodies`.
+    pub(super) no_type_check_bodies: Vec<TextRange>,
     pub lookup: &'a dyn LookupExport,
     pub sys_info: SysInfo,
     pub metadata: BindingsMetadata,
@@ -558,8 +563,9 @@ pub struct BindingsBuilder<'a> {
     pub check_unannotated_defs: bool,
     /// When true, unannotated function bodies are still analyzed (creating
     /// bindings for the solver) even when `check_unannotated_defs` is false,
-    /// so that IDE features like hover and goto-def work inside them.
-    /// In CLI batch-check mode this is false to avoid wasted work.
+    /// and so are `@no_type_check` bodies, so that IDE features like hover and
+    /// goto-def work inside them. In CLI batch-check mode this is false to
+    /// avoid wasted work.
     pub analyze_unannotated_for_ide: bool,
     pub infer_return_types: InferReturnTypes,
     pub treat_all_caps_as_final: bool,
@@ -710,6 +716,7 @@ impl Bindings {
             }),
             annotated_metadata_ranges: Vec::new(),
             docstring_type_ranges: Vec::new(),
+            no_type_check_bodies: Vec::new(),
             scope_trace: None,
             module_deletes: SmallSet::new(),
             unset_nodes: UnsetNodes::default(),
@@ -757,6 +764,10 @@ impl Bindings {
 
     pub fn binding_errors(&self) -> &ModuleDiagnostics {
         &self.binding_errors
+    }
+
+    pub fn no_type_check_bodies(&self) -> &[TextRange] {
+        &self.no_type_check_bodies
     }
 
     pub fn sys_info(&self) -> &SysInfo {
@@ -1132,6 +1143,7 @@ impl Bindings {
             module_info: module_info.dupe(),
             annotated_metadata_ranges: Vec::new(),
             docstring_type_ranges: Vec::new(),
+            no_type_check_bodies: Vec::new(),
             lookup,
             sys_info,
             errors,
@@ -1301,13 +1313,17 @@ impl Bindings {
         Self {
             module_info,
             parse_errors,
-            binding_errors: builder.errors.finish(),
+            binding_errors: builder
+                .errors
+                .finish()
+                .without_ranges(&builder.no_type_check_bodies),
             sys_info: builder.sys_info,
             table: builder.table,
             metadata: Arc::new(builder.metadata),
             module_ranges,
             annotated_metadata_ranges: merge_ranges(builder.annotated_metadata_ranges),
             docstring_type_ranges: merge_ranges(builder.docstring_type_ranges),
+            no_type_check_bodies: builder.no_type_check_bodies,
             scope_trace: if enable_trace {
                 Some(scope_trace)
             } else {

@@ -106,8 +106,11 @@ use crate::state::require::Require;
 use crate::state::state::CancellableTransaction;
 use crate::state::state::Transaction;
 use crate::state::state::TransactionHandle;
+use crate::types::callable::Param;
+use crate::types::callable::Params;
 use crate::types::module::ModuleType;
 use crate::types::type_var::Restriction;
+use crate::types::types::BoundMethodType;
 use crate::types::types::Type;
 
 mod dict_completions;
@@ -306,6 +309,11 @@ pub struct FindPreference {
     /// which can open any file, but not consumers like Glean, which must
     /// target files inside the project.
     pub include_interpreter_stdlib: bool,
+    /// When true (the default), an attribute written in the source can resolve to an
+    /// implicit member: one that its class inherits from `object`, such as `obj.__class__`,
+    /// or, on a class object, a member of its metaclass, such as `C.__name__`. Pysa sets this
+    /// to false, because its call graph treats calls to those members as unresolved.
+    pub include_implicit_members: bool,
 }
 
 impl Default for FindPreference {
@@ -318,6 +326,7 @@ impl Default for FindPreference {
             replacement_policy: ImportReplacementPolicy::Respect,
             disable_style_fallback: false,
             include_interpreter_stdlib: false,
+            include_implicit_members: true,
         }
     }
 }
@@ -1313,7 +1322,25 @@ impl<'a> Transaction<'a> {
     ) -> Option<(TextRange, DefinitionMetadata)> {
         let param_id = param_name.id();
 
-        // Prefer class field annotations/assignments when present.
+        // A parameter of the class's own `__init__` is what the argument binds.
+        for stmt in &class_def.body {
+            if let Stmt::FunctionDef(function_def) = stmt
+                && function_def.name.id == dunder::INIT
+                && let Some(param) = function_def
+                    .parameters
+                    .args
+                    .iter()
+                    .chain(function_def.parameters.kwonlyargs.iter())
+                    .find(|param| param.name().id() == param_id)
+            {
+                return Some((
+                    param.name().range(),
+                    DefinitionMetadata::Variable(Some(SymbolKind::Variable)),
+                ));
+            }
+        }
+
+        // Without one, as in dataclasses and Pydantic models, the argument sets a class field.
         for stmt in &class_def.body {
             match stmt {
                 Stmt::AnnAssign(assign) if expr_matches_name(assign.target.as_ref(), param_id) => {
@@ -1332,31 +1359,135 @@ impl<'a> Transaction<'a> {
             }
         }
 
-        // Fall back to __init__ parameters if no class field matches.
-        for stmt in &class_def.body {
-            if let Stmt::FunctionDef(function_def) = stmt
-                && function_def.name.id == dunder::INIT
-            {
-                for regular_param in function_def.parameters.args.iter() {
-                    if regular_param.name().id() == param_id {
-                        return Some((
-                            regular_param.name().range(),
-                            DefinitionMetadata::Variable(Some(SymbolKind::Variable)),
-                        ));
-                    }
-                }
-                for kwonly_param in function_def.parameters.kwonlyargs.iter() {
-                    if kwonly_param.name().id() == param_id {
-                        return Some((
-                            kwonly_param.name().range(),
-                            DefinitionMetadata::Variable(Some(SymbolKind::Variable)),
-                        ));
-                    }
-                }
-            }
-        }
-
         None
+    }
+
+    /// The definition that a keyword argument refers to, found from the callee's type, when
+    /// go-to-definition on the callee does not lead to a `def` or class body that has it: see
+    /// `keyword_argument_definition_for_type`.
+    fn keyword_argument_definition_from_callee_type(
+        &self,
+        handle: &Handle,
+        callee_kind: &CalleeKind,
+        identifier: &Identifier,
+    ) -> Option<(DefinitionMetadata, TextRangeWithModule)> {
+        let (callee_range, name) = match callee_kind {
+            CalleeKind::Function(name) => (name.range, name),
+            CalleeKind::Method(base_range, name) => {
+                (TextRange::new(base_range.start(), name.range.end()), name)
+            }
+            CalleeKind::Unknown => return None,
+        };
+        // A callee that the solver handles without inferring it as an expression, such as
+        // `TypeVar` in a `TypeVar(...)` declaration, has no recorded type, so the type of the
+        // name's binding is used instead.
+        let callee_ty = self
+            .get_type_trace(handle, callee_range)
+            .or_else(|| self.get_type_at_preserving_declaration(handle, name.range.start()))?;
+        self.keyword_argument_definition_for_type(handle, &callee_ty, identifier)
+    }
+
+    /// The definition that a keyword argument refers to when the callee has type `ty`.
+    /// - A class object or `type[C]`: a parameter of the `__init__` or `__new__` the class has,
+    ///   which may be inherited, or, when its `__init__` is synthesized (dataclasses,
+    ///   TypedDicts, classes with an unknown base), a field it inherits.
+    /// - A function or method: a parameter of its `def`, or of any `def` of an overload.
+    /// - A union: the definition for the first member that has one, as multi-target lookups
+    ///   elsewhere take the first target.
+    fn keyword_argument_definition_for_type(
+        &self,
+        handle: &Handle,
+        ty: &Type,
+        identifier: &Identifier,
+    ) -> Option<(DefinitionMetadata, TextRangeWithModule)> {
+        // A signature that has no parameter of the keyword's name is skipped before its
+        // module is parsed, because a module that is not open, such as a stub, is parsed again
+        // on every lookup.
+        let takes_keyword = |ty: Type| {
+            ty.toplevel_callable_signatures()
+                .any(|(callable, _)| match &callable.params {
+                    Params::List(params) | Params::Partial(params) => {
+                        params.items().iter().any(|param| match param {
+                            Param::Pos(name, ..) | Param::KwOnly(name, ..) => {
+                                name == identifier.id()
+                            }
+                            Param::PosOnly(..) | Param::Varargs(..) | Param::Kwargs(..) => false,
+                        })
+                    }
+                    Params::Ellipsis | Params::Materialization | Params::ParamSpec(..) => false,
+                })
+        };
+        let class = match ty {
+            Type::Union(union) => {
+                return union.members.iter().find_map(|member| {
+                    self.keyword_argument_definition_for_type(handle, member, identifier)
+                });
+            }
+            Type::ClassDef(class) => class,
+            Type::Type(instance) => match &**instance {
+                Type::ClassType(cls) => cls.class_object(),
+                _ => return None,
+            },
+            _ => {
+                let overload = match ty {
+                    Type::Overload(overload) => Some(overload),
+                    Type::BoundMethod(method) => match &method.func {
+                        BoundMethodType::Overload(overload) => Some(overload),
+                        BoundMethodType::Function(_) | BoundMethodType::Forall(_) => None,
+                    },
+                    _ => None,
+                };
+                let signatures = match overload {
+                    Some(overload) => overload.signatures.iter().map(|s| s.as_type()).collect(),
+                    None => vec![ty.clone()],
+                };
+                return signatures.into_iter().find_map(|signature| {
+                    let metadata = signature.toplevel_func_metadata()?;
+                    if !takes_keyword(signature.clone()) {
+                        return None;
+                    }
+                    let def = self.function_def_location(handle, metadata)?.ok()?;
+                    let ast = self.get_ast_or_parse_module(handle, &def.module);
+                    let range =
+                        self.refine_param_location_for_callee(&ast, def.range, identifier)?;
+                    Some((
+                        DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
+                        TextRangeWithModule::new(def.module, range),
+                    ))
+                });
+            }
+        };
+        let [init, new, field] =
+            self.ad_hoc_solve(handle, "keyword_argument_definition_for_type", |solver| {
+                [&dunder::INIT, &dunder::NEW, identifier.id()].map(|name| {
+                    let member = solver.get_class_member_with_defining_class(class, name)?;
+                    let range = solver
+                        .get_class_fields(&member.defining_class)?
+                        .field_decl_range(name)?;
+                    Some((
+                        member.value.ty(),
+                        TextRangeWithModule::new(member.defining_class.module().dupe(), range),
+                    ))
+                })
+            })?;
+        let synthesized_init = init.is_none();
+        [init, new]
+            .into_iter()
+            .flatten()
+            .filter_map(|(ty, constructor)| takes_keyword(ty).then_some(constructor))
+            .find_map(|constructor| {
+                let ast = self.get_ast_or_parse_module(handle, &constructor.module);
+                let range =
+                    self.refine_param_location_for_callee(&ast, constructor.range, identifier)?;
+                Some((
+                    DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
+                    TextRangeWithModule::new(constructor.module, range),
+                ))
+            })
+            .or_else(|| {
+                let (_, field) = field?;
+                synthesized_init.then_some((DefinitionMetadata::Attribute, field))
+            })
     }
 
     fn refine_keyword_argument_definition_for_callee(
@@ -1740,6 +1871,18 @@ impl<'a> Transaction<'a> {
     }
 
     /// Resolve a named import through re-exports and package submodules.
+    /// The export that refers to the module of `handle` as a whole.
+    fn module_export(&self, handle: &Handle) -> Export {
+        Export {
+            location: TextRange::default(),
+            symbol_kind: Some(SymbolKind::Module),
+            docstring_range: self.get_module_docstring_range(handle),
+            deprecation: None,
+            is_final: false,
+            special_export: None,
+        }
+    }
+
     pub(crate) fn resolve_named_import(
         &self,
         handle: &Handle,
@@ -1771,19 +1914,8 @@ impl<'a> Transaction<'a> {
                         if let Some(sub_handle) =
                             self.import_handle_with_preference(handle, submodule, preference)
                         {
-                            let docstring_range = self.get_module_docstring_range(&sub_handle);
-                            return Some((
-                                sub_handle,
-                                name,
-                                Export {
-                                    location: TextRange::default(),
-                                    symbol_kind: Some(SymbolKind::Module),
-                                    docstring_range,
-                                    deprecation: None,
-                                    is_final: false,
-                                    special_export: None,
-                                },
-                            ));
+                            let export = self.module_export(&sub_handle);
+                            return Some((sub_handle, name, export));
                         }
                         return self.resolve_named_import(
                             handle,
@@ -1798,6 +1930,19 @@ impl<'a> Transaction<'a> {
                     return Some((hop_handle, name, export));
                 }
                 ExportLocation::OtherModule(module, aliased_name) => {
+                    // `import x` (or `import x.y`) binds `x` to the module `x` itself, not to a
+                    // name in it, as `from x import x` would.
+                    if aliased_name.is_none()
+                        && self.get_exports_data(&hop_handle).imports_module(&name)
+                    {
+                        let module_handle = self.import_handle_with_preference(
+                            &hop_handle,
+                            ModuleName::from_name(&name),
+                            preference,
+                        )?;
+                        let export = self.module_export(&module_handle);
+                        return Some((module_handle, name, export));
+                    }
                     if let Some(aliased_name) = aliased_name {
                         name = aliased_name;
                     }
@@ -1805,19 +1950,8 @@ impl<'a> Transaction<'a> {
                         let submodule = m.append(&name);
                         let sub_handle =
                             self.import_handle_with_preference(&hop_handle, submodule, preference)?;
-                        let docstring_range = self.get_module_docstring_range(&sub_handle);
-                        return Some((
-                            sub_handle,
-                            name,
-                            Export {
-                                location: TextRange::default(),
-                                symbol_kind: Some(SymbolKind::Module),
-                                docstring_range,
-                                deprecation: None,
-                                is_final: false,
-                                special_export: None,
-                            },
-                        ));
+                        let export = self.module_export(&sub_handle);
+                        return Some((sub_handle, name, export));
                     }
                     m = module;
                 }
@@ -2294,6 +2428,7 @@ impl<'a> Transaction<'a> {
             preference,
             ty.clone(),
             &Name::new_static("forward"),
+            false,
         )
         .ok()
     }
@@ -2334,6 +2469,7 @@ impl<'a> Transaction<'a> {
                         preference,
                         ty.clone(),
                         &dunder::INIT,
+                        false,
                     )
                     .map(Vec1::into_vec)
                     .unwrap_or_default();
@@ -2343,6 +2479,7 @@ impl<'a> Transaction<'a> {
                         preference,
                         ty,
                         &dunder::NEW,
+                        false,
                     )
                     .map(Vec1::into_vec)
                     .unwrap_or_default(),
@@ -2355,9 +2492,15 @@ impl<'a> Transaction<'a> {
                 {
                     return defs.into_vec();
                 }
-                self.find_attribute_definition_for_base_type(handle, preference, ty, &dunder::CALL)
-                    .map(Vec1::into_vec)
-                    .unwrap_or_default()
+                self.find_attribute_definition_for_base_type(
+                    handle,
+                    preference,
+                    ty,
+                    &dunder::CALL,
+                    false,
+                )
+                .map(Vec1::into_vec)
+                .unwrap_or_default()
             }
             Type::NNModule(module) => self.find_call_target_definitions(
                 handle,
@@ -2382,10 +2525,16 @@ impl<'a> Transaction<'a> {
     ) -> Option<FindDefinitionItemWithDocstring> {
         completions.into_iter().find_map(|x| {
             if &x.name == name {
+                // `b` in `a.b` after `import a.b` is the submodule itself.
+                let metadata = if matches!(x.definition, AttrDefinition::Submodule { .. }) {
+                    DefinitionMetadata::Module
+                } else {
+                    DefinitionMetadata::Attribute
+                };
                 let (definition, docstring_range) =
                     self.resolve_attribute_definition(handle, &x.name, x.definition, preference)?;
                 Some(FindDefinitionItemWithDocstring {
-                    metadata: DefinitionMetadata::Attribute,
+                    metadata,
                     definition_range: definition.range,
                     module: definition.module,
                     docstring_range,
@@ -2401,16 +2550,23 @@ impl<'a> Transaction<'a> {
     /// Returns `Err(DefinitionNotFound)` if the attribute doesn't exist
     /// on any branch of a union type. The returned `Vec1` is guaranteed
     /// non-empty.
+    ///
+    /// `include_implicit` says whether an implicit member (see `AttrInfo::is_implicit`)
+    /// counts. It can for an attribute written in the source (`obj.__class__`, see
+    /// `FindPreference::include_implicit_members`), but not for the implicit lookups of a
+    /// constructor, `__call__` or an operator, whose callers fall back to another target when
+    /// the class does not define the member.
     pub(crate) fn find_attribute_definition_for_base_type(
         &self,
         handle: &Handle,
         preference: FindPreference,
         base_type: Type,
         name: &Name,
+        include_implicit: bool,
     ) -> Result<Vec1<FindDefinitionItemWithDocstring>, EmptyResponseReason> {
         let defs = self
             .ad_hoc_solve(handle, "attribute_definition", |solver| {
-                let completions = |ty| solver.completions(ty, Some(name), false, false);
+                let completions = |ty| solver.completions(ty, Some(name), false, include_implicit);
 
                 match base_type {
                     Type::Union(u) => u
@@ -2707,7 +2863,13 @@ impl<'a> Transaction<'a> {
         } = dunder;
         let dunder_str = dunder_name.to_string();
         let defs = self
-            .find_attribute_definition_for_base_type(handle, preference, base_type, &dunder_name)
+            .find_attribute_definition_for_base_type(
+                handle,
+                preference,
+                base_type,
+                &dunder_name,
+                false,
+            )
             .map_err(|_| EmptyResponseReason::DefinitionNotFound {
                 name: dunder_str.clone(),
                 context: DefinitionContext::Operator { dunder: dunder_str },
@@ -2798,6 +2960,7 @@ impl<'a> Transaction<'a> {
             preference,
             base_type.clone(),
             name,
+            preference.include_implicit_members,
         ) {
             return Ok(defs);
         }
@@ -2920,6 +3083,15 @@ impl<'a> Transaction<'a> {
                         DefinitionMetadata::Variable(Some(SymbolKind::Parameter)),
                         param_range,
                     )
+                } else if let Some((metadata, TextRangeWithModule { module, range })) = self
+                    .keyword_argument_definition_from_callee_type(handle, callee_kind, identifier)
+                {
+                    results.push(FindDefinitionItem {
+                        metadata,
+                        definition_range: range,
+                        module,
+                    });
+                    continue;
                 } else {
                     // TODO(grievejia): Should we filter out unrefinable ranges here?
                     (
@@ -4915,7 +5087,7 @@ impl<'a> Transaction<'a> {
                         is_deprecated: _,
                         definition,
                         is_reexport: _,
-                        is_from_object: _,
+                        is_implicit: _,
                     } in solver.completions(base_type, Some(&attribute.id), false, false)
                     {
                         if let Some((TextRangeWithModule { module, range }, _)) = self

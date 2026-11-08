@@ -618,7 +618,11 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 } else {
                     left.clone()
                 }
-            } else if !left.is_any() && !right.is_any() && self.is_subset_eq(left, right) {
+            } else if !left.is_any()
+                && !right.is_any()
+                && self.is_subset_eq(left, right)
+                && !self.is_subclass_only_through_any_base(left, right)
+            {
                 // The is_any checks are because `Any <: int` and `int <: Any` are both true, but
                 // neither `Any - int` nor `int - Any` should produce Never.
                 self.heap.mk_never()
@@ -626,6 +630,19 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 left.clone()
             }
         })
+    }
+
+    /// Whether `left` is assignable to `right` only because one of them has a base class of
+    /// unknown type. Such a class is assignable to and from every class, but an instance of
+    /// `left` is an instance of `right` only if `right` is in `left`'s MRO.
+    fn is_subclass_only_through_any_base(&self, left: &Type, right: &Type) -> bool {
+        match (left, right) {
+            (Type::ClassType(left), Type::ClassType(right)) => {
+                (self.extends_any(left.class_object()) || self.extends_any(right.class_object()))
+                    && !self.has_superclass(left.class_object(), right.class_object())
+            }
+            _ => false,
+        }
     }
 
     fn enum_instance<'b, 'c>(left: &'b Type, right: &'c Type) -> Option<(Instance<'b>, &'c Name)> {

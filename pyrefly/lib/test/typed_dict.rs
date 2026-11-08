@@ -166,6 +166,22 @@ c: Child = {"x": 1, "y": 2}
 "#,
 );
 
+// A value whose key is an error has no type to be checked against, but is still inferred, so
+// the errors inside it are reported.
+testcase!(
+    test_typed_dict_literal_value_of_bad_key_is_inferred,
+    r#"
+from typing import TypedDict
+class Coord(TypedDict):
+    x: int
+    y: int
+
+def f(key: str) -> None:
+    c1: Coord = {"x": 1, "y": 2, "a": 1 + "a"}  # E: Key `a` is not defined in TypedDict `Coord`  # E: `+` is not supported between `Literal[1]` and `Literal['a']`
+    c2: Coord = {"x": 1, "y": 2, key: 1 + "a"}  # E: Expected string literal key, got `str`  # E: `+` is not supported between `Literal[1]` and `Literal['a']`
+"#,
+);
+
 testcase!(
     test_typed_dict_literal,
     r#"

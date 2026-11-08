@@ -980,6 +980,11 @@ impl<'a> Transaction<'a> {
         &self.data.state.endpoint_module_cache
     }
 
+    /// The thread pool of the state, for reports that fan work out across modules.
+    pub(crate) fn thread_pool(&self) -> &ThreadPool {
+        &self.data.state.threads
+    }
+
     pub(crate) fn get_parsed_module(&self, handle: &Handle) -> Option<Arc<ParsedModule>> {
         self.with_module_inner(handle, |x| x.get_parsed_module())
     }

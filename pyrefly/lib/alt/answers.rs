@@ -1558,7 +1558,10 @@ impl Answers {
             module_info: bindings.module().dupe(),
             parse_errors: bindings.parse_errors().dupe(),
             binding_errors: bindings.binding_errors().dupe(),
-            solve_errors: self.errors.take(),
+            solve_errors: self
+                .errors
+                .take()
+                .without_ranges(bindings.no_type_check_bodies()),
             data: self.solutions.dupe(),
             metadata: bindings.metadata().dupe(),
             module_ranges: bindings.module_ranges().dupe(),
@@ -1878,7 +1881,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 is_deprecated: _,
                 definition,
                 is_reexport: _,
-                is_from_object: _,
+                is_implicit: _,
             } in self.completions(base.clone(), Some(attribute_name), false, false)
             {
                 match definition {

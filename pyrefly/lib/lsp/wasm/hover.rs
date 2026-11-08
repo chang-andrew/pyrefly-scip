@@ -233,6 +233,7 @@ impl HoverValue {
                 FindPreference::default(),
                 search_type,
                 &Name::new(target),
+                false,
             )
             .ok()?;
 

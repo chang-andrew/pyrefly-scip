@@ -1268,6 +1268,26 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         construct(None)
     }
 
+    /// Infers the arguments of a call whose callee has no known signature, so that errors
+    /// inside them are still reported and their expressions still have types.
+    fn infer_unmatched_arguments(
+        &self,
+        args: &[CallArg],
+        keywords: &[CallKeyword],
+        errors: &ErrorCollector,
+    ) {
+        for arg in args {
+            match arg {
+                CallArg::Arg(e) | CallArg::Star(e, _) => {
+                    e.infer(self, errors);
+                }
+            }
+        }
+        for kw in keywords {
+            kw.value.infer(self, errors);
+        }
+    }
+
     fn construct_class(
         &self,
         cls: ClassType,
@@ -1587,6 +1607,10 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             if !recorded_trace {
                 self.record_resolved_trace(arguments_range, &init_method);
             }
+        } else if !overrides_new {
+            // The class inherits from an unknown base, so `__init__` lookup found nothing to
+            // match the arguments against.
+            self.infer_unmatched_arguments(args, keywords, &arg_errors);
         }
         if class_metadata.is_pydantic_model()
             && let Some(dataclass) = class_metadata.dataclass_metadata()
@@ -2217,17 +2241,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 ctor_targs,
             ),
             CallTarget::Any(style) => {
-                // Make sure we still catch errors in the arguments.
-                for arg in args {
-                    match arg {
-                        CallArg::Arg(e) | CallArg::Star(e, _) => {
-                            e.infer(self, errors);
-                        }
-                    }
-                }
-                for kw in keywords {
-                    kw.value.infer(self, errors);
-                }
+                self.infer_unmatched_arguments(args, keywords, errors);
                 CallOutcome::of_ty(Type::Any(style))
             }
         };
