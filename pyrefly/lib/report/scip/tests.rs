@@ -642,7 +642,7 @@ enumerate([], start=1)
 
 // `b` in `a.b` after `import a.b` refers to the submodule. scip-python instead gives the head
 // `a`, or sometimes the whole dotted name, the symbol of the first `a.*` submodule that the
-// file imports (`dotted-import-head` and `dotted-module-span` in scip-goal/ADJUDICATIONS.md).
+// file imports.
 #[test]
 fn test_dotted_submodule_reference() {
     assert_index(
@@ -846,8 +846,8 @@ def run(box: Box, flag=True) -> int:
 
 /// A member reference through a receiver whose class overrides the member names the override,
 /// not the base's declaration: a method, a class attribute, an instance attribute and a
-/// Django-style `objects` manager (GOAL.md B1). Inside the base class, `self` is the base, so
-/// its references name the base's declarations.
+/// Django-style `objects` manager. Inside the base class, `self` is the base, so its references
+/// name the base's declarations.
 #[test]
 fn test_reference_to_overriding_member() {
     assert_index(
@@ -980,8 +980,7 @@ def use(part: Part) -> None:
 // Ported from scip-python's snapshot tests (MIT license):
 // packages/pyright-scip/snapshots/input/unique/inherits_class.py and grandparent_impl.py.
 // The occurrences and relationships match scip-python's, except `NotImplemented`, which
-// pyrefly's typeshed declares as a variable rather than a class (`stdlib-same-name` in
-// scip-goal/ADJUDICATIONS.md).
+// pyrefly's typeshed declares as a variable rather than a class.
 #[test]
 fn test_ported_inherits_class() {
     assert_index(
@@ -1111,7 +1110,7 @@ class C(B):
 // Ported from scip-python's snapshot tests (MIT license):
 // packages/pyright-scip/snapshots/input/unique/builtin_import_refs.py.
 // Matches scip-python's output, except `typing.Any`, which pyrefly's typeshed declares as a
-// class rather than a variable (`stdlib-same-name` in scip-goal/ADJUDICATIONS.md).
+// class rather than a variable.
 #[test]
 fn test_ported_builtin_import_refs() {
     assert_index(
@@ -1848,8 +1847,7 @@ for var in asdf:
 // packages/pyright-scip/snapshots/input/dunder_vars/.
 // Matches scip-python's output, except `__name__`, which scip-python names with the invented
 // `builtins/__name__#` and pyrefly leaves without an occurrence: an implicit module attribute
-// has no definition site (`module-namespace` and `builtin-named-attribute` in
-// scip-goal/ADJUDICATIONS.md).
+// has no definition site.
 #[test]
 fn test_ported_dunder_vars() {
     assert_index(
@@ -2135,7 +2133,7 @@ X = "a constant"
 // Ported from scip-python's snapshot tests (MIT license):
 // packages/pyright-scip/snapshots/input/graph_1278/.
 // Matches scip-python's output, except the relationship to `typing.Generic`, which the report
-// leaves out (`relationship-special-form` in scip-goal/ADJUDICATIONS.md).
+// leaves out.
 #[test]
 fn test_ported_graph_1278() {
     assert_index(
@@ -2643,8 +2641,8 @@ next_level()(a = "wow")
 // Ported from scip-python's snapshot tests (MIT license):
 // packages/pyright-scip/snapshots/input/unresolved_import/.
 // Matches scip-python's output, except the unresolved `this_is_not_real`, which scip-python
-// gives a local symbol and pyrefly no occurrence (GOAL.md §5.1, `unresolved-name` in
-// scip-goal/ADJUDICATIONS.md).
+// gives a local symbol and pyrefly no occurrence: the report does not invent symbols for
+// unresolved imports.
 #[test]
 fn test_ported_unresolved_import() {
     assert_index(
