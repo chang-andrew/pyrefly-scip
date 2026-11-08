@@ -12,8 +12,10 @@ build = "test_laziness/build.rs"
 [lib]
 path = "lib/lib.rs"
 
+# Renamed on the narrate-release branch so the wheel installs `pyrefly-scip`, which sits next to
+# a stock `pyrefly` in the same environment without either overwriting the other.
 [[bin]]
-name = "pyrefly"
+name = "pyrefly-scip"
 path = "bin/main.rs"
 
 [[test]]

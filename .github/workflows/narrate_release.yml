@@ -1,0 +1,110 @@
+name: "Narrate: release pyrefly-scip wheels"
+
+# Builds `pyrefly-scip` wheels for every platform Narrate runs its Python indexer on, and attaches
+# them to a GitHub release named after the tag. Narrate pins each wheel by URL and hash in uv.lock:
+#   linux x86_64    Render, CI
+#   linux aarch64   the local docker-compose worker on Apple silicon
+#   macOS arm64/x64 development machines and the desktop app
+on:
+  push:
+    tags: ["narrate-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Build wheel
+        if: ${{ startsWith(matrix.target, 'x86_64') }}
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist
+          working-directory: pyrefly
+      - name: Build wheel (aarch64)
+        if: ${{ startsWith(matrix.target, 'aarch64') }}
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist
+          working-directory: pyrefly
+        env:
+          # aarch64-linux builds need 64KB jemalloc pages, or they segfault (facebook/pyrefly#380).
+          JEMALLOC_SYS_WITH_LG_PAGE: 16
+      - name: Test wheel
+        if: ${{ startsWith(matrix.target, 'x86_64') }}
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install pyrefly/dist/pyrefly_scip-*.whl
+          .venv/bin/pyrefly-scip --version
+          .venv/bin/pyrefly-scip check --report-scip index.scip test.py || true
+          test -s index.scip
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wheels-${{ matrix.target }}
+          path: pyrefly/dist
+
+  macos:
+    runs-on: macos-15
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Set jemalloc page size for macOS ARM64
+        if: ${{ matrix.target == 'aarch64' }}
+        run: echo "JEMALLOC_SYS_WITH_LG_PAGE=14" >> "$GITHUB_ENV"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          working-directory: pyrefly
+      - name: Test wheel
+        if: ${{ matrix.target == 'aarch64' }}
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install pyrefly/dist/pyrefly_scip-*.whl
+          .venv/bin/pyrefly-scip --version
+          .venv/bin/pyrefly-scip check --report-scip index.scip test.py || true
+          test -s index.scip
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: pyrefly/dist
+
+  release:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum *.whl > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" *.whl SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "pyrefly-scip $GITHUB_REF_NAME" \
+            --notes "pyrefly-scip wheels built from $GITHUB_SHA for Narrate's Python indexer."
